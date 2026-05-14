@@ -95,3 +95,24 @@ class WorkflowState(TypedDict, total=False):
     # ------------------------------------------------------------------
     budget_remaining_tokens: int
     budget_remaining_usd_micros: int
+
+    # ------------------------------------------------------------------
+    # HITL routing discriminant set by the /callbacks/slack/* handler
+    # (or by the expiry watcher) immediately before the graph resumes
+    # from interrupt_before=['solver']. Values: 'APPROVED' | 'REJECTED'
+    # | 'EXPIRED'. The post-interrupt conditional edge keys on this and
+    # this only — when REJECTED or EXPIRED the graph terminates without
+    # invoking the Solver. See builder.py and api/callbacks.py.
+    # ------------------------------------------------------------------
+    approval_status: str
+
+    # HMAC approval token issued at approve-time and written into state so
+    # the Solver pre-flight can verify that no ProposedFix mutation happened
+    # between approval and execution. Only present on APPROVED resumes;
+    # absent (empty string) on REJECTED / EXPIRED paths.
+    approval_token: str
+
+    # Raw Alertmanager body, preserved verbatim after HMAC verify + dedup
+    # so the full triage can be replayed from audit. Set by Ingest (or
+    # by the webhook handler when it kicks the graph off).
+    alert_payload: dict
