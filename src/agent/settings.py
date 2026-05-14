@@ -6,17 +6,27 @@ Pydantic Settings: env-driven configuration for the agent service.
 Corresponds to tasks.md T017.
 
 All settings can be overridden via environment variables or a ``.env`` file at
-the repo root.  Copy ``.env.example`` → ``.env`` and adjust values.
+the repo root.  Copy ``.env.example`` -> ``.env`` and adjust values.
 
-LLM provider (research.md R2, plan.md §Technical Context):
+LLM provider (research.md R2, plan.md S Technical Context):
   The agent talks to **any OpenAI-compatible** inference server via
   ``langchain-openai``'s ``ChatOpenAI``.  For local development the default
   target is Ollama at ``http://localhost:11434/v1``.  Override ``LLM_BASE_URL``
   to point at a different server (LM Studio, vLLM, cloud OpenAI, etc.).
 
-Two-reviewer rule (Principle VI / plan.md §Constitution Check): any PR that
+Two-reviewer rule (Principle VI / plan.md S Constitution Check): any PR that
 changes LLM_ROUTER_MODEL, LLM_EXPERT_MODEL, or LLM_BASE_URL requires two
 reviewers and a plan.md citation.
+
+Naming convention:
+  Canonical Python attribute names are ``lower_case`` (PEP 8). Pydantic-
+  settings is case-insensitive when matching env vars, so the ``.env`` /
+  shell still uses UPPER_CASE keys (e.g. ``LLM_BASE_URL`` -> ``llm_base_url``).
+
+  UPPER_CASE Python aliases (``ALERTMANAGER_HMAC_SECRET``, ``SQLITE_PATH``,
+  ``APPROVAL_WINDOW_MINUTES``, ...) are exposed as ``@property``s for the
+  webhook / HITL / persistence call sites that pre-date the rename. New code
+  should use the lower_case names.
 """
 
 from __future__ import annotations
@@ -26,17 +36,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AgentSettings(BaseSettings):
-    """
-    Runtime configuration for the agent service.
-
-    Environment variable names are the UPPER_CASE equivalents of the field
-    names.  Example: ``llm_base_url`` ↔ ``LLM_BASE_URL``.
-
-    Priority (highest → lowest):
-      1. Real environment variables
-      2. ``.env`` file at the repo root
-      3. Field defaults declared below
-    """
+    """Runtime configuration for the agent service."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -45,62 +45,39 @@ class AgentSettings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
-    # LLM provider — local OpenAI-compatible inference server
-    # (research.md R2; plan.md §Technical Context; Principle VI two-reviewer)
+    # LLM provider — OpenAI-compatible inference server
     # ------------------------------------------------------------------
     llm_base_url: str = Field(
         default="http://localhost:11434/v1",
-        description=(
-            "Base URL of the OpenAI-compatible inference server.  "
-            "Default: Ollama at localhost:11434.  "
-            "Override for LM Studio (port 1234), vLLM, or cloud OpenAI."
-        ),
+        description="Base URL of the OpenAI-compatible inference server.",
     )
     llm_api_key: str = Field(
         default="ollama",
-        description=(
-            "API key sent to the inference server.  "
-            "Use 'ollama' for Ollama, 'lm-studio' for LM Studio, "
-            "or a real key for cloud endpoints."
-        ),
+        description="API key sent to the inference server.",
     )
     llm_router_model: str = Field(
         default="qwen2.5:7b",
-        description=(
-            "Model name for the Router node (small/fast tier, research.md R2).  "
-            "Must be available on the server at LLM_BASE_URL."
-        ),
+        description="Model name for the Router node (small/fast tier).",
     )
     llm_expert_model: str = Field(
         default="qwen2.5:14b",
-        description=(
-            "Model name for Expert nodes (larger/reasoning tier, research.md R2).  "
-            "Must be available on the server at LLM_BASE_URL."
-        ),
+        description="Model name for Expert nodes (larger/reasoning tier).",
     )
 
     # ------------------------------------------------------------------
-    # Per-incident budget  (spec FR-029; research.md R8)
-    #
-    # For local inference there is no USD cost, so budget_usd_micros defaults
-    # to -1 (unlimited) while token ceiling remains enforced fail-closed.
-    # The USD field is retained for forward-compatibility with cloud providers
-    # (plan.md §Constraints).
+    # Per-incident budget (spec FR-029)
     # ------------------------------------------------------------------
     budget_tokens_per_incident: int = Field(
         default=50_000,
-        description="Per-incident token ceiling.  Fail-closed.",
+        description="Per-incident token ceiling. Fail-closed.",
     )
     budget_usd_micros_per_incident: int = Field(
         default=-1,
-        description=(
-            "Per-incident USD ceiling in micros.  -1 = unlimited (local inference). "
-            "Set to e.g. 500_000 ($0.50) when using a metered cloud provider."
-        ),
+        description="Per-incident USD ceiling in micros. -1 = unlimited (local inference).",
     )
 
     # ------------------------------------------------------------------
-    # HITL approval window  (spec FR-017)
+    # HITL approval window (spec FR-017)
     # ------------------------------------------------------------------
     approval_window_seconds: int = Field(
         default=1800,
@@ -108,7 +85,7 @@ class AgentSettings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
-    # Webhook dedup window  (research.md R12)
+    # Webhook dedup window (research.md R12)
     # ------------------------------------------------------------------
     dedup_window_seconds: int = Field(
         default=600,
@@ -116,19 +93,12 @@ class AgentSettings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
-    # Alertmanager HMAC secret  (spec FR-002)
+    # Alertmanager + Slack-mock secrets
     # ------------------------------------------------------------------
     alertmanager_hmac_secret: str = Field(
         default="dev-secret-change-me",
-        description=(
-            "Shared secret for verifying Alertmanager webhook HMAC signatures.  "
-            "MUST be overridden in non-dev environments."
-        ),
+        description="Shared secret for verifying Alertmanager webhook HMAC signatures.",
     )
-
-    # ------------------------------------------------------------------
-    # Slack mock  (research.md R6)
-    # ------------------------------------------------------------------
     slack_mock_secret: str = Field(
         default="dev-slack-secret",
         description="HMAC secret used to sign /callbacks/slack payloads.",
@@ -138,9 +108,69 @@ class AgentSettings(BaseSettings):
         description="URL of the mock-Slack receiver service.",
     )
 
+    # ------------------------------------------------------------------
+    # HITL resume + persistence (Person 3 webhook layer)
+    # ------------------------------------------------------------------
+    approval_token_secret: str = Field(
+        default="dev-approval-secret",
+        description="HMAC secret for short-lived approval tokens issued by the callback handler.",
+    )
+    sqlite_path: str = Field(
+        default="./data/agent.sqlite3",
+        description="Path to the SQLite file holding audit_log + incidents + LangGraph checkpoints.",
+    )
+    expiry_sweep_seconds: int = Field(
+        default=30,
+        description="Interval between approval-deadline expiry sweeps.",
+    )
+    approver_role: str = Field(
+        default="triage-approver",
+        description="Role required to approve any catalog action (research.md R11 default mapping).",
+    )
 
-# ---------------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Backward-compatibility properties for the webhook / HITL / persistence
+    # call sites that pre-date the rename. Read-only EXCEPT SQLITE_PATH
+    # (writable so per-test fixtures can point at a tmp file).
+    # New code should use the lower_case names directly.
+    # ------------------------------------------------------------------
+    @property
+    def ALERTMANAGER_HMAC_SECRET(self) -> str:  # noqa: N802
+        return self.alertmanager_hmac_secret
+
+    @property
+    def SLACK_MOCK_SECRET(self) -> str:  # noqa: N802
+        return self.slack_mock_secret
+
+    @property
+    def APPROVAL_TOKEN_SECRET(self) -> str:  # noqa: N802
+        return self.approval_token_secret
+
+    @property
+    def APPROVER_ROLE(self) -> str:  # noqa: N802
+        return self.approver_role
+
+    @property
+    def EXPIRY_SWEEP_SECONDS(self) -> int:  # noqa: N802
+        return self.expiry_sweep_seconds
+
+    @property
+    def APPROVAL_WINDOW_MINUTES(self) -> int:  # noqa: N802
+        return self.approval_window_seconds // 60
+
+    @property
+    def DEDUP_WINDOW_MINUTES(self) -> int:  # noqa: N802
+        return self.dedup_window_seconds // 60
+
+    @property
+    def SQLITE_PATH(self) -> str:  # noqa: N802
+        return self.sqlite_path
+
+    @SQLITE_PATH.setter
+    def SQLITE_PATH(self, value: str) -> None:  # noqa: N802
+        # Per-test fixtures override the DB path with this name.
+        self.sqlite_path = value
+
+
 # Module-level singleton — import ``settings`` everywhere, don't instantiate.
-# All fields have defaults, so import succeeds with an empty environment.
-# ---------------------------------------------------------------------------
 settings = AgentSettings()
