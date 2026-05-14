@@ -17,7 +17,6 @@ Per contracts/slack_mock.md, in this order:
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 from datetime import datetime, timezone
@@ -63,12 +62,17 @@ def _verify_signature(body: bytes, signature: Optional[str]) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
-async def _resume_graph(graph: Any, correlation_id: str, approval_status: str) -> None:
+async def _resume_graph(
+    graph: Any, correlation_id: str, approval_status: str, approval_token: str = ""
+) -> None:
     """Update the paused checkpoint's state with the approval verdict and continue."""
     bind(correlation_id)
     config = {"configurable": {"thread_id": correlation_id}}
     try:
-        await graph.aupdate_state(config, {"approval_status": approval_status})
+        await graph.aupdate_state(
+            config,
+            {"approval_status": approval_status, "approval_token": approval_token},
+        )
         # Pass None to continue from where we paused.
         await graph.ainvoke(None, config=config)
         log.info("graph.resume_completed", correlation_id=correlation_id, status=approval_status)
@@ -152,7 +156,7 @@ async def _handle(action: str, request: Request, body_bytes: bytes, signature: O
                 outcome="refused",
                 actor={"type": "user", "id": body.actor.user_id, "roles": body.actor.roles},
                 payload={
-                    "action": "reject",
+                    "action": action,
                     "actor_id": body.actor.user_id,
                     "actor_roles": body.actor.roles,
                     "role_check_passed": False,
@@ -208,6 +212,7 @@ async def _handle(action: str, request: Request, body_bytes: bytes, signature: O
         "role_check_passed": role_ok,
         "reason": body.reason,
     }
+    token = ""
     if action == "approve":
         # Issue a token bound to the frozen ProposedFix fingerprint so
         # Person 1's Solver pre-flight can verify nothing changed
@@ -232,8 +237,14 @@ async def _handle(action: str, request: Request, body_bytes: bytes, signature: O
 
     # Resume the paused graph in a background task so the HTTP response
     # returns immediately (the contract says 200 on accept, the actual
-    # solver work is async).
-    asyncio.create_task(_resume_graph(request.app.state.graph, cid, approval_status_for_state))
+    # solver work is async). spawn_tracked keeps a strong ref so the task
+    # can't be GC'd mid-run.
+    from src.agent.api import spawn_tracked
+
+    spawn_tracked(
+        request.app,
+        _resume_graph(request.app.state.graph, cid, approval_status_for_state, token),
+    )
 
     return JSONResponse(
         status_code=200,

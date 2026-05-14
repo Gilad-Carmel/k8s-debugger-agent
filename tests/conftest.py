@@ -80,6 +80,19 @@ async def graph_state(app, correlation_id: str) -> dict:
     return dict(snapshot.values) if snapshot else {}
 
 
+def silence_graph(app) -> None:
+    """Stub graph.ainvoke + graph.aupdate_state to no-ops so a test can
+    exercise the HTTP / persistence layer without spawning a real graph
+    run that would hang on a live LLM call. Use in any test that doesn't
+    care about actual graph execution."""
+
+    async def _noop(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return None
+
+    app.state.graph.aupdate_state = _noop
+    app.state.graph.ainvoke = _noop
+
+
 def _sign(secret: str, body: bytes) -> str:
     return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 

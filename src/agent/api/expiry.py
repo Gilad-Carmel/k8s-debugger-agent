@@ -44,7 +44,7 @@ async def _expire_one(graph: Any, correlation_id: str) -> None:
     )
     config = {"configurable": {"thread_id": correlation_id}}
     try:
-        await graph.aupdate_state(config, {"approval_status": "EXPIRED"})
+        await graph.aupdate_state(config, {"approval_status": "EXPIRED", "approval_token": ""})
         await graph.ainvoke(None, config=config)
     except Exception as exc:  # noqa: BLE001
         log.warning("expiry.resume_failed", correlation_id=correlation_id, error=str(exc))

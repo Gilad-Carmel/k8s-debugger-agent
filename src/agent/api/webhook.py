@@ -13,7 +13,6 @@ Per contracts/alertmanager_webhook.md:
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import math
@@ -143,9 +142,72 @@ async def alertmanager_webhook(
             content=error_response("missing_alerts", "alerts[] must be non-empty."),
         )
 
-    # Resolved alerts are recorded but short-circuited (no triage).
+    starts_at = payload.alerts[0].startsAt
+    if starts_at.tzinfo is None:
+        starts_at = starts_at.replace(tzinfo=timezone.utc)
+    fingerprint = _dedup_fingerprint(payload.groupKey, namespace, pod, starts_at)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Resolved alerts: link to the original firing incident if we have one
+    # (so the audit log can be reconstructed by correlation_id), otherwise
+    # record the resolution under a fresh id and flag that no prior firing
+    # was seen. Either way no triage runs.
     if payload.status == "resolved":
+        async with get_conn() as conn:
+            cur = await conn.execute(
+                "SELECT correlation_id, status FROM incidents WHERE dedup_fingerprint = ?",
+                (fingerprint,),
+            )
+            existing = await cur.fetchone()
+            await cur.close()
+
+            if existing:
+                cid = existing["correlation_id"]
+                prior_status = existing["status"]
+                # Only flip status when the incident hadn't already reached a
+                # terminal/acted state. 'pending' is the common case (never
+                # approved); 'approved' / 'executed' are also fine to mark
+                # resolved upstream. 'rejected' / 'failed' / 'expired' /
+                # already 'resolved' are preserved.
+                if prior_status in {"pending", "approved", "executed"}:
+                    await conn.execute(
+                        "UPDATE incidents SET status = 'resolved', last_seen_at = ?"
+                        " WHERE correlation_id = ?",
+                        (now_iso, cid),
+                    )
+                else:
+                    await conn.execute(
+                        "UPDATE incidents SET last_seen_at = ? WHERE correlation_id = ?",
+                        (now_iso, cid),
+                    )
+                await conn.commit()
+
+                bind(cid)
+                await log_audit_event(
+                    cid,
+                    stage="webhook_received",
+                    outcome="ok",
+                    payload={
+                        "source_alert_id": payload.groupKey,
+                        "namespace": namespace,
+                        "pod": pod,
+                        "headers_signed": True,
+                        "reason": "resolved_for_existing_incident",
+                        "prior_status": prior_status,
+                    },
+                )
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "correlation_id": cid,
+                        "deduplicated": True,
+                        "status": "resolved",
+                    },
+                )
+
+        # No prior firing found — record the resolution under a fresh id.
         cid = new_correlation_id()
+        bind(cid)
         await log_audit_event(
             cid,
             stage="webhook_received",
@@ -155,7 +217,7 @@ async def alertmanager_webhook(
                 "namespace": namespace,
                 "pod": pod,
                 "headers_signed": True,
-                "reason": "resolved_short_circuit",
+                "reason": "resolved_no_prior_firing",
             },
         )
         return JSONResponse(
@@ -163,13 +225,7 @@ async def alertmanager_webhook(
             content={"correlation_id": cid, "deduplicated": False, "status": "resolved"},
         )
 
-    starts_at = payload.alerts[0].startsAt
-    if starts_at.tzinfo is None:
-        starts_at = starts_at.replace(tzinfo=timezone.utc)
-    fingerprint = _dedup_fingerprint(payload.groupKey, namespace, pod, starts_at)
-
-    # 3. Dedup check + 4. insert/update
-    now_iso = datetime.now(timezone.utc).isoformat()
+    # 3. Dedup check + 4. insert/update  (now_iso reused from above)
     deadline_iso = (
         datetime.now(timezone.utc) + timedelta(minutes=settings.APPROVAL_WINDOW_MINUTES)
     ).isoformat()
@@ -239,8 +295,11 @@ async def alertmanager_webhook(
 
     # Kick off the graph in the background. ainvoke runs until the
     # interrupt_before=["solver"] gate; the HITL callback resumes it.
+    # spawn_tracked keeps a strong ref so the task can't be GC'd mid-run.
+    from src.agent.api import spawn_tracked
+
     graph = request.app.state.graph
-    asyncio.create_task(_run_graph(graph, cid, payload.model_dump(mode="json")))
+    spawn_tracked(request.app, _run_graph(graph, cid, payload.model_dump(mode="json")))
 
     return JSONResponse(
         status_code=202,

@@ -106,6 +106,12 @@ class WorkflowState(TypedDict, total=False):
     # ------------------------------------------------------------------
     approval_status: str
 
+    # HMAC approval token issued at approve-time and written into state so
+    # the Solver pre-flight can verify that no ProposedFix mutation happened
+    # between approval and execution. Only present on APPROVED resumes;
+    # absent (empty string) on REJECTED / EXPIRED paths.
+    approval_token: str
+
     # Raw Alertmanager body, preserved verbatim after HMAC verify + dedup
     # so the full triage can be replayed from audit. Set by Ingest (or
     # by the webhook handler when it kicks the graph off).
