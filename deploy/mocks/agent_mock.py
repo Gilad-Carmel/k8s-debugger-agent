@@ -93,7 +93,8 @@ def _sign(body: bytes) -> str:
 
 def _track_background_task(coro: Coroutine[Any, Any, None]) -> None:
     """Keep a strong reference to a background task until it completes."""
-    task = asyncio.create_task(coro)
+    task_name = getattr(coro, "__qualname__", "background-task")
+    task = asyncio.create_task(coro, name=task_name)
     _background_tasks.add(task)
 
     def _cleanup(completed: asyncio.Task[None]) -> None:
@@ -102,7 +103,7 @@ def _track_background_task(coro: Coroutine[Any, Any, None]) -> None:
             return
         exc = completed.exception()
         if exc is not None:
-            logger.error("background task failed", exc_info=exc)
+            logger.error("background task failed task=%s", completed.get_name(), exc_info=exc)
 
     task.add_done_callback(_cleanup)
 
