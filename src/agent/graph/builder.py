@@ -46,10 +46,22 @@ from src.agent.graph.state import WorkflowState
 
 
 def _route_after_reporter(state: WorkflowState) -> str:
-    """Post-interrupt edge: only APPROVED proceeds to the Solver."""
-    if state.get("approval_status") == "APPROVED":
+    """Route reporter → solver or END.
+
+    First pass (no approval_status): route to solver if a fix exists so that
+    interrupt_before=["solver"] fires and the graph pauses for HITL.
+    Resume pass: honor the approval decision set by the callback handler.
+    """
+    approval = state.get("approval_status")
+    if approval == "APPROVED":
         return "solver"
-    # REJECTED, EXPIRED, missing — terminate without mutation.
+    if approval in ("REJECTED", "EXPIRED"):
+        return END
+    # First pass — approval not yet set. Route to solver only when there is a
+    # proposed fix; interrupt_before will pause the graph before solver runs.
+    report = state.get("report")
+    if report and report.proposed_fix:
+        return "solver"
     return END
 
 
