@@ -92,7 +92,12 @@ def _sign(body: bytes) -> str:
 
 
 def _track_background_task(coro: Coroutine[Any, Any, None], task_name: str) -> None:
-    """Keep a strong reference to a background task until it completes."""
+    """
+    Keep a strong reference to a background task until completion.
+
+    This prevents the task from being garbage-collected mid-flight. A done callback
+    removes the task from the tracking set and logs any unhandled failure.
+    """
     task = asyncio.create_task(coro, name=task_name)
     _background_tasks.add(task)
 
