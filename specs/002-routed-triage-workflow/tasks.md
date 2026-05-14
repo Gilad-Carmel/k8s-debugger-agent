@@ -59,11 +59,11 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 
 ### Shared contracts (cross-package)
 
-- [ ] T012 [P] Label vocabulary (Domain, Confidence, ReportStatus, SolverOutcome, ActionType enums) in `src/shared/labels.py` per data-model.md §Common types
+- [x] T012 [P] Label vocabulary (Domain, Confidence, ReportStatus, SolverOutcome, ActionType enums) in `src/shared/labels.py` per data-model.md §Common types
 - [ ] T013 [P] Single user-facing error template in `src/shared/errors.py` (Principle VIII: machine_token + human readable)
 - [ ] T014 [P] Correlation ID (UUIDv7) generation + `contextvars` propagation in `src/shared/correlation.py`
 - [ ] T015 [P] Allowed-remediation catalog with parameter schemas and the fixed Forward → Inverse Action mapping in `src/shared/catalog.py` per spec.md §Assumptions and data-model.md §Allowed-remediation catalog
-- [ ] T016 Pydantic v2 schemas (`Target`, `TimeWindow`, `LogExcerpt`, `FilteredEvidence`, `RoutingDecision`, `ExpertDiagnosis`, `ProposedFix`, `ReversalRecipe`, `Report`, `ApprovalEvent`, `SolverRun`, `Incident`, `ToolError`) in `src/shared/schemas.py` per data-model.md §Entities (depends on T012, T015)
+- [x] T016 Pydantic v2 schemas (`Target`, `TimeWindow`, `LogExcerpt`, `FilteredEvidence`, `RoutingDecision`, `ExpertDiagnosis`, `ProposedFix`, `ReversalRecipe`, `Report`, `ApprovalEvent`, `SolverRun`, `Incident`, `ToolError`) in `src/shared/schemas.py` per data-model.md §Entities (depends on T012, T015)
 
 ### Agent core infra
 
@@ -75,8 +75,8 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 - [ ] T022 SQL migration for the append-only `audit_record` table at `deploy/sql/001_audit_record.sql` per contracts/audit_record.md (schema + indexes + REVOKE UPDATE/DELETE/TRUNCATE)
 - [ ] T023 SQLAlchemy 2.x engine + async session factory (postgres prod / sqlite dev switch) in `src/agent/db.py` (depends on T022)
 - [ ] T024 Append-only audit writer (one row per stage, sequence_no monotonic per correlation_id) in `src/agent/audit.py` per contracts/audit_record.md (depends on T023)
-- [ ] T025 [P] WorkflowState TypedDict in `src/agent/graph/state.py` per data-model.md §WorkflowState (depends on T016)
-- [ ] T026 LangGraph builder skeleton + checkpointer wiring (`langgraph.checkpoint.postgres` prod / `langgraph.checkpoint.sqlite` dev) in `src/agent/graph/builder.py` (depends on T023, T025) — nodes registered as no-ops, conditional edges scaffolded
+- [x] T025 [P] WorkflowState TypedDict in `src/agent/graph/state.py` per data-model.md §WorkflowState (depends on T016)
+- [x] T026 LangGraph builder skeleton + checkpointer wiring (`langgraph.checkpoint.postgres` prod / `langgraph.checkpoint.sqlite` dev) in `src/agent/graph/builder.py` (depends on T023, T025) — nodes registered as no-ops, conditional edges scaffolded
 - [ ] T027 Tiered Anthropic LLM client + structured-output helper (Haiku/Sonnet tiering, model recorded for audit, token+cost accounting hook) in `src/agent/llm.py` per research.md §R2 (depends on T021, T024)
 - [ ] T028 [P] FastAPI app factory + `/health` endpoint in `src/agent/api/health.py` and app wiring in `src/agent/api/__init__.py`
 
