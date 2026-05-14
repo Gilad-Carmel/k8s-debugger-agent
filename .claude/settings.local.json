@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(pip install *)",
+      "Bash(Start-Sleep -Seconds 3)",
+      "Bash(Invoke-WebRequest -Uri \"http://localhost:8090/health\" -UseBasicParsing)",
+      "Bash(Select-Object -ExpandProperty Content)",
+      "Bash(python -m uvicorn deploy.slack_mock.app:app --port 8090 --log-level warning)",
+      "Bash(curl -s http://localhost:8090/health)",
+      "Bash(python demo_slack.py application)",
+      "Bash(python demo_slack.py network)",
+      "Bash(python demo_slack.py database)",
+      "Bash(python demo_slack.py unknown)",
+      "Bash(netstat -ano)",
+      "Bash(awk '{print $5}')",
+      "Bash(xargs -I{} taskkill //PID {} //F)"
+    ]
+  }
+}
