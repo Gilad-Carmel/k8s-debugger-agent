@@ -17,8 +17,10 @@ dependencies = [
     # Data validation + settings
     "pydantic>=2.0",
     "pydantic-settings",
-    # LLM provider (primary — research.md R2)
-    "anthropic",
+    # LLM client — local OpenAI-compatible inference server (research.md R2)
+    # langchain-openai wraps openai SDK, provides .with_structured_output()
+    "langchain-openai",
+    "openai",
     # Persistence
     "sqlalchemy>=2.0",
     "asyncpg",      # Postgres driver (prod)
@@ -116,6 +118,14 @@ show_error_codes = true
 module = "tests.*"
 strict = false
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "openai.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "langchain_openai.*"
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "deepeval.*"

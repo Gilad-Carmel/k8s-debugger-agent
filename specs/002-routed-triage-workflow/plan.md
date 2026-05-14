@@ -16,11 +16,12 @@ Build a LangGraph state-machine workflow that (a) receives an Alertmanager-style
 
 - `langgraph` ≥ 0.2 — state machine, interrupt-and-resume, checkpointer integration
 - `langchain-core` (only for the structured-output / model-binding helpers LangGraph already depends on)
+- `langchain-openai` — `ChatOpenAI` client with configurable `base_url`; used for all LLM calls; provider-agnostic interface to the local OpenAI-compatible inference server (research.md R2)
+- `openai` — transitive dep of `langchain-openai`; also used directly for low-level retry/structured-output fallback in `llm.py`
 - `mcp` (official Python SDK) — for the in-repo MCP server exposing K8s read + scoped-write tools
 - `kubernetes` (official Python client) — used inside MCP tools; never called directly from agent code
 - `fastapi` + `uvicorn` — webhook intake, mock-Slack receiver, interactive callback endpoints
 - `pydantic` v2 — typed state, structured LLM outputs, shared Report schema, MCP tool schemas
-- `anthropic` (primary) — Haiku-class for Router/Reporter, Sonnet-class for Experts. Model IDs configurable.
 - `sqlalchemy` + `asyncpg` (prod) / `aiosqlite` (dev) — audit table and checkpoint storage
 - `structlog` — correlation-ID-bound structured logging
 - `opentelemetry-api` + `opentelemetry-sdk` — node-entry/exit and MCP-call span instrumentation for the IX perf budget
@@ -58,7 +59,7 @@ Plus, in dev only: a mock-Slack FastAPI receiver and a `kind` cluster.
 
 **Constraints**:
 
-- Per-incident cost ceiling enforced fail-closed (spec FR-029); default $0.50 / 50k tokens — tunable per tenant.
+- Per-incident cost ceiling enforced fail-closed (spec FR-029); ceiling is **token-count only** for local inference (no per-token USD cost); token default 50k — tunable per tenant. USD-micros field in `WorkflowState` is retained for forward-compatibility with cloud providers but defaults to unlimited (`-1`) when `LLM_BASE_URL` points to a local server.
 - Kill switch halts all in-flight Solver actions for a tenant within 5 s (FR-030).
 - Zero unredacted secrets reach the LLM or the audit record (SC-009).
 - All MCP write tools are individually scoped per action type and per namespace; no broad cluster-admin token.
@@ -80,11 +81,11 @@ Evaluated against `.specify/memory/constitution.md` v1.1.0 (Principles I–IX).
 | # | Principle | Status | Notes |
 |---|---|---|---|
 | I | Safety-First Autonomy | ✅ Compliant | Read-only by default (MCP read tools). Mutations gated on HITL approval via LangGraph `interrupt` (spec FR-015). Catalog-only writes (FR-011 / FR-021). Pre-state snapshot captured immediately before every forward action; the **Inverse Action** is *computed* by the Solver at execution time from that snapshot using the fixed Forward → Inverse mapping in the catalog (FR-022, never an Expert-authored ad-hoc script). Per-target serialization (FR-026). Kill switch within 5 s (FR-030). No `--force` / `--grace-period=0` bypass. |
-| II | Cost-Conscious by Design | ✅ Compliant | Tiered model selection: Router on Haiku-class, Experts on Sonnet-class, Reporter on Haiku-class. Per-incident token + cost ceiling (FR-029). Cached/summarized state passes between nodes via LangGraph state (not re-prompted). Cost is recorded per-stage in audit. |
+| II | Cost-Conscious by Design | ✅ Compliant | Local inference eliminates per-token USD cost; Principle II still satisfied: token ceiling is enforced fail-closed (latency + memory budget), per-stage token usage is recorded in audit, and the USD-micros field is retained for cloud-provider forward-compatibility. The "cheapest model that meets the bar" principle maps to lowest max_tokens + temperature=0 for the Router vs. fuller context for Experts. |
 | III | Developer Experience as a Product | ✅ Compliant | Single Slack-style chat message with TL;DR + cited evidence + interactive controls (FR-013/FR-014). Latency SLOs from constitution IX adopted directly (see Performance Goals). One-command local setup via `docker-compose up` (quickstart.md). |
 | IV | Evidence-Backed Triage (NON-NEGOTIABLE) | ✅ Compliant | Router cites (FR-007), Experts cite (FR-010), 100% of user-facing claims cited (SC-005). Hallucination tests run in CI. |
 | V | Observability & Reversibility | ✅ Compliant | Single `correlation_id` joins every stage (FR-028). Audit table records prompt, response, model, tokens, cost, redactions, pre/action/post-state, and the **Inverse Action** computed at Solver execution time (FR-022, FR-023). LangGraph checkpoints provide an additional crash-recovery audit surface. |
-| VI | Code Quality | ✅ Compliant | `ruff` + `black` + `mypy --strict` in CI. Cyclomatic complexity cap (15) enforced via `ruff` `C901`. Dependency vetting captured in `research.md` §R13. Two-reviewer rule applies to PRs touching MCP write tools, redaction, budget enforcement, authorization (`auth.py` + role-check), **model selection / provider dependencies (`llm.py`, `settings.py:LLM_*`)**, and this plan. |
+| VI | Code Quality | ✅ Compliant | `ruff` + `black` + `mypy --strict` in CI. Cyclomatic complexity cap (15) enforced via `ruff` `C901`. Dependency vetting captured in `research.md` §R13. Two-reviewer rule applies to PRs touching MCP write tools, redaction, budget enforcement, authorization (`auth.py` + role-check), **model selection / provider dependencies (`llm.py`, `settings.py:LLM_*`)**, and this plan. Switch from `anthropic` → `langchain-openai` is a model-dependency change; this plan update counts as the first required review. |
 | VII | Testing Standards (NON-NEGOTIABLE) | ✅ Compliant | Coverage floors 85% / 95% enforced in CI per safety-critical module list (`redaction`, `budget`, `approval`, `auth`, `solver._guards`, MCP `tools/_guards`, MCP write tools). LLM eval suite for Router and per-Expert (all three: Application, Network, Database). Hallucination test on every Expert response. Refusal-path + Inverse-Action-recipe tests for every MCP write tool. |
 | VIII | User Experience Consistency | ✅ Compliant | One pydantic `Report` model produced by the Reporter node; rendered for Slack-mock today, web/CLI later. Shared label vocabulary (`Application` / `Network` / `Database` / `Unknown`). Single error-message template. Timestamps ISO-8601; bytes IEC. |
 | IX | Performance Requirements (DevOps SLOs) | ✅ Compliant | TTFT/p50/p95/cost SLOs declared above and CI-enforced on the benchmark. Bounded jittered retries on K8s + LLM calls. Hot paths (LangGraph node entry/exit, MCP tool calls) profiled via `opentelemetry`. Freshness SLO N/A (MVP refetches every incident). |
