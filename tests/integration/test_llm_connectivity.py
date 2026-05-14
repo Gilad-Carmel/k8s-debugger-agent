@@ -40,12 +40,12 @@ from src.agent.settings import settings
 # ---------------------------------------------------------------------------
 
 def _server_reachable() -> bool:
-    """Return True if the configured LLM base URL responds within 3 s."""
+    """Return True if the configured LLM base URL responds successfully within 3 s."""
     try:
         # Hit the /models endpoint — present on every OpenAI-compatible server.
         url = settings.llm_base_url.rstrip("/").removesuffix("/v1") + "/v1/models"
-        httpx.get(url, timeout=3.0)
-        return True
+        response = httpx.get(url, timeout=3.0)
+        return response.status_code == 200
     except Exception:
         return False
 
