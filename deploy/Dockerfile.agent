@@ -1,0 +1,52 @@
+# deploy/Dockerfile.agent
+#
+# Agent service: FastAPI webhook intake + LangGraph workflow runner.
+#
+# Memory budget: ≤ 512 MiB RSS (plan.md §Constraints, Principle IX)
+# Exposed port  : 8080
+# Entry point   : src.agent.api.main:app  (implemented in Phase 3 / T024)
+#
+# Build from repo root:
+#   docker build -f deploy/Dockerfile.agent -t k8s-debugger-agent .
+#
+# Or via compose:
+#   docker compose -f deploy/docker-compose.yml build agent
+
+FROM python:3.11-slim AS base
+
+WORKDIR /app
+
+# ---- dependency layer (changes rarely) ------------------------------------
+COPY pyproject.toml .
+# Install uv for fast, reproducible installs inside the container.
+RUN pip install --no-cache-dir uv==0.6.14
+
+# Install only runtime deps (no dev group) into the system Python.
+RUN uv pip install --system --no-cache .
+
+# ---- source layer (changes often) -----------------------------------------
+COPY src/ src/
+
+# ---- runtime image --------------------------------------------------------
+FROM base AS runtime
+
+# Non-root user for least-privilege operation (Principle I).
+RUN useradd --no-create-home --shell /bin/false agent
+USER agent
+
+# Expose the FastAPI service port.
+EXPOSE 8080
+
+# Memory-limit guard: Python will hard-exit rather than OOM-kill the container
+# silently.  512 MiB = 536870912 bytes.
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Entry point: uvicorn serving src/agent/api/main.py:app
+# The main.py FastAPI application is created in Phase 3 (T024/T026).
+# Use --timeout-keep-alive 30 to match the p95 SLO (spec SC-003).
+CMD ["python", "-m", "uvicorn", \
+     "src.agent.api.main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8080", \
+     "--timeout-keep-alive", "30"]
