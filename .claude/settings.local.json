@@ -14,7 +14,10 @@
       "Bash(python demo_slack.py unknown)",
       "Bash(netstat -ano)",
       "Bash(awk '{print $5}')",
-      "Bash(xargs -I{} taskkill //PID {} //F)"
+      "Bash(xargs -I{} taskkill //PID {} //F)",
+      "Bash(git rm *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

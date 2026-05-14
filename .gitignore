@@ -67,7 +67,9 @@ Thumbs.db
 
 # LangGraph / SQLite checkpoints
 *.sqlite
+*.sqlite3
 *.db
+data/
 
 # Logs
 *.log
