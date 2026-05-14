@@ -25,7 +25,7 @@ from src.shared.schemas import ToolError
 # HMAC secret shared between agent (token issuer) and MCP server (verifier).
 # Must be the same value in both processes.
 # ---------------------------------------------------------------------------
-_APPROVAL_TOKEN_SECRET: str = os.environ.get("APPROVAL_TOKEN_SECRET", "dev-secret-change-me")
+_APPROVAL_TOKEN_SECRET: str = os.environ.get("APPROVAL_TOKEN_SECRET", "dev-approval-secret")
 
 
 class GuardError(Exception):
@@ -122,37 +122,30 @@ def _labels_match(pod_labels: dict[str, str], selector_labels: dict[str, str]) -
 # ---------------------------------------------------------------------------
 def validate_approval_token(
     approval_token: str,
+    correlation_id: str,
     proposed_fix_fingerprint: str,
 ) -> None:
     """
-    Validate the HMAC-signed approval token.
+    Validate the HMAC-signed approval token issued by the agent.
 
-    Expected format: ``{fingerprint}:{exp_unix}:{hmac_hex}``
+    Expected format: ``{exp_unix}.{hmac_hex}``
+    HMAC body:       ``{correlation_id}|{fingerprint}|{exp_unix}``
 
     Raises GuardError(approval_invalid) on:
       - Wrong number of segments
-      - Fingerprint mismatch
       - Token expired
       - Invalid HMAC signature
     """
-    parts = approval_token.split(":")
-    if len(parts) != 3:
+    parts = approval_token.split(".", 1)
+    if len(parts) != 2:
         raise GuardError(
             ToolError(
                 machine_token="approval_invalid",
-                human_message="Malformed approval token (expected 3 colon-separated segments).",
+                human_message="Malformed approval token (expected '{exp_unix}.{hmac}' format).",
             )
         )
 
-    fp, exp_str, token_hmac = parts
-
-    if fp != proposed_fix_fingerprint:
-        raise GuardError(
-            ToolError(
-                machine_token="approval_invalid",
-                human_message="Approval token fingerprint does not match the proposed fix.",
-            )
-        )
+    exp_str, token_hmac = parts
 
     try:
         exp = int(exp_str)
@@ -172,7 +165,7 @@ def validate_approval_token(
             )
         )
 
-    msg = f"{fp}:{exp_str}".encode()
+    msg = f"{correlation_id}|{proposed_fix_fingerprint}|{exp_str}".encode()
     expected_hmac = hmac.new(
         _APPROVAL_TOKEN_SECRET.encode(), msg, hashlib.sha256
     ).hexdigest()

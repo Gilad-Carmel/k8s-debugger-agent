@@ -69,7 +69,7 @@ async def scale_deployment(
     # ---- Pre-flight guards -------------------------------------------------
     try:
         await check_kill_switch(tenant)
-        validate_approval_token(approval_token, proposed_fix_fingerprint)
+        validate_approval_token(approval_token, correlation_id, proposed_fix_fingerprint)
     except GuardError as exc:
         return WriteToolOutput(
             outcome="refused",
