@@ -50,19 +50,18 @@ def _server_reachable() -> bool:
         return False
 
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration]
 
 # Applied at collection time so the skip message is clear.
 if not _server_reachable():
-    pytestmark = [
-        pytest.mark.integration,
+    pytestmark.append(
         pytest.mark.skip(
             reason=(
                 f"LLM server not reachable at {settings.llm_base_url} — "
                 "start your inference server and re-run."
             )
-        ),
-    ]
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
