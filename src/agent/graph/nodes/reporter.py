@@ -374,11 +374,17 @@ async def chat_deliver(
 
     for url in targets:
         try:
+            headers = {"Content-Type": "application/json"}
+            if url == settings.slack_mock_url:
+                tenant_id = getattr(report, "tenant_id", None)
+                if tenant_id is not None:
+                    headers["X-Tenant-Id"] = str(tenant_id)
+
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.post(
                     f"{url}/messages",
                     content=body_bytes,
-                    headers={"Content-Type": "application/json"},
+                    headers=headers,
                 )
                 resp.raise_for_status()
                 data = resp.json()
