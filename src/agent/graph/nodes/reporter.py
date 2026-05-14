@@ -12,6 +12,7 @@ Task:      T051 (initial), T084 (solver follow-up extension)
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -20,8 +21,8 @@ from typing import Any
 
 import httpx
 
+from src.agent.graph.state import WorkflowState
 from src.shared.schemas import (
-    ApprovalEvent,
     ExpertDiagnosis,
     LogExcerpt,
     ProposedFix,
@@ -402,3 +403,38 @@ def make_report(
         approval_deadline=approval_deadline,
         runner_up_domains=list(routing.runners_up),
     )
+
+def reporter_node(state: WorkflowState) -> WorkflowState:
+    """Assemble and deliver the report, returning the report field in state."""
+    correlation_id = state["correlation_id"]
+    routing = state["routing"]
+    diagnosis = state.get("diagnosis")
+
+    tentative_delivered_at = datetime.now(tz=timezone.utc)
+    report = make_report(
+        correlation_id=correlation_id,
+        routing=routing,
+        diagnosis=diagnosis,
+        delivered_at=tentative_delivered_at,
+    )
+
+    try:
+        asyncio.get_running_loop()
+        logger.warning(
+            "report delivery skipped corr=%s reason=running_event_loop",
+            correlation_id,
+        )
+    except RuntimeError:
+        try:
+            delivered_at_iso, _ = asyncio.run(deliver(report))
+            delivered_at = datetime.fromisoformat(delivered_at_iso.replace("Z", "+00:00"))
+            report = report.model_copy(
+                update={
+                    "delivered_at": delivered_at,
+                    "approval_deadline": delivered_at + timedelta(minutes=APPROVAL_WINDOW_MINUTES),
+                }
+            )
+        except Exception:
+            logger.exception("report delivery failed corr=%s", correlation_id)
+
+    return {"report": report}
