@@ -68,17 +68,17 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 ### Agent core infra
 
 - [x] T017 [P] Pydantic Settings (env-driven config: LLM model IDs, budget ceilings, approval window, dedup window, redaction patterns) in `src/agent/settings.py`
-- [ ] T018 [P] Structured logging configuration bound to correlation contextvar in `src/agent/logging_config.py` (structlog)
+- [x] T018 [P] Structured logging configuration bound to correlation contextvar in `src/agent/logging_config.py` (structlog)
 - [ ] T019 [P] OpenTelemetry tracer + node-entry/exit + MCP-call span helpers in `src/agent/telemetry.py` (Principle IX)
 - [x] T020 [P] Double-pass regex redaction (boundary + pre-LLM) in `src/agent/redaction.py` per research.md §R7 (bearer/AWS/GCP/Azure/SA-token/JWT/DB-conn-string patterns); 95% coverage tier
 - [ ] T021 [P] Per-incident token + USD-micros budget enforcement (fail-closed) in `src/agent/budget.py` per research.md §R8; 95% coverage tier
 - [ ] T022 SQLite DDL bootstrap: ensure `audit_record` table + indexes are created by `src/agent/db.py` `init_db()` on startup (replaces the Postgres `deploy/sql/` migration approach); add unit test asserting no UPDATE/DELETE SQL targeting `audit_record` exists in any source file (application-layer append-only enforcement; see research.md §R3)
 - [x] T023 SQLite async connection helper (`aiosqlite`, WAL + FK pragmas) + `init_db()` in `src/agent/db.py` (depends on T022)
-- [ ] T024 Append-only audit writer (one row per stage, sequence_no monotonic per correlation_id) in `src/agent/audit.py` per contracts/audit_record.md (depends on T023)
+- [x] T024 Append-only audit writer (one row per stage, sequence_no monotonic per correlation_id) in `src/agent/audit.py` per contracts/audit_record.md (depends on T023)
 - [x] T025 [P] WorkflowState TypedDict in `src/agent/graph/state.py` per data-model.md §WorkflowState (depends on T016)
 - [x] T026 LangGraph builder skeleton + checkpointer wiring (`langgraph.checkpoint.sqlite` via `AsyncSqliteSaver`) in `src/agent/graph/builder.py` (depends on T023, T025) — nodes registered as no-ops, conditional edges scaffolded
 - [ ] T027 Local-LLM client + structured-output helper (`ChatOpenAI` from `langchain-openai` with configurable `base_url`/`api_key`; router profile: low max_tokens + temp=0; expert profile: full-context + temp=0.2; JSON-mode fallback; model recorded for audit; token accounting hook) in `src/agent/llm.py` per research.md §R2 (depends on T021, T024)
-- [ ] T028 [P] FastAPI app factory + `/health` endpoint in `src/agent/api/health.py` and app wiring in `src/agent/api/__init__.py`
+- [x] T028 [P] FastAPI app factory + `/health` endpoint in `src/agent/api/health.py` and app wiring in `src/agent/api/__init__.py`
 
 ### MCP server infra
 
@@ -119,16 +119,16 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 - [x] T041 [P] [US1] MCP read tool `search_pod_logs` with additive contextual N-line window + K-line fallback + boundary redaction in `src/mcp_server/tools/search_pod_logs.py` (FR-004, R7)
 - [x] T042 [P] [US1] MCP read tool `get_pod_events` (last N minutes of Kubernetes events for target) in `src/mcp_server/tools/get_pod_events.py`
 - [x] T043 [P] [US1] MCP read tool `get_pod` (phase, container states, restart counts, resource_version) in `src/mcp_server/tools/get_pod.py`
-- [ ] T044 [US1] Webhook intake `POST /webhook/alertmanager` (HMAC verify constant-time, parse Alertmanager v4 subset, dedup fingerprint via R12, 202 with `correlation_id`) in `src/agent/api/webhook.py` (depends on T016, T024, T028)
+- [x] T044 [US1] Webhook intake `POST /webhook/alertmanager` (HMAC verify constant-time, parse Alertmanager v4 subset, dedup fingerprint via R12, 202 with `correlation_id`) in `src/agent/api/webhook.py` (depends on T016, T024, T028)
 - [ ] T045 [US1] Ingest node: TTFT ack emitted to slack-mock before any LLM call; calls the three MCP read tools concurrently; populates `evidence` on `WorkflowState` in `src/agent/graph/nodes/ingest.py` (depends on T031, T041-T043)
 - [x] T046 [US1] Router node (fast-sampling profile, structured pydantic output via `.with_structured_output()`: `domain`, `confidence`, `cited_evidence ≥1` unless Unknown, `runners_up`) in `src/agent/graph/nodes/router.py` (FR-005..FR-008; depends on T027)
 - [x] T047 [US1] Expert base protocol + shared prompt builder in `src/agent/graph/nodes/experts/_base.py`
 - [x] T048 [P] [US1] Application Expert node in `src/agent/graph/nodes/experts/application.py` (full-context profile via `llm.py`; produces `ExpertDiagnosis` with cited evidence + `ProposedFix | None`)
 - [ ] T049 [P] [US1] Network Expert node in `src/agent/graph/nodes/experts/network.py`
 - [ ] T050 [P] [US1] Database Expert node in `src/agent/graph/nodes/experts/database.py`
-- [ ] T051 [US1] Reporter node: assemble `Report`, render Block Kit blocks, POST to slack-mock, set `delivered_at` + `approval_deadline`, persist `report_delivered` audit row in `src/agent/graph/nodes/reporter.py` (FR-013, FR-014; depends on T024)
-- [ ] T052 [US1] Slack-mock FastAPI service (`POST /messages`, `POST /messages/{id}/approve|reject` → signed callback to agent) in `deploy/slack_mock/app.py` + `deploy/slack_mock/Dockerfile`
-- [ ] T053 [US1] Wire the graph in `src/agent/graph/builder.py`: `ingest → router → {application|network|database|unknown-short-circuit} → reporter`; conditional edge keyed on `classification` only (depends on T026, T045, T046, T047-T050, T051)
+- [x] T051 [US1] Reporter node: assemble `Report`, render Block Kit blocks, POST to slack-mock, set `delivered_at` + `approval_deadline`, persist `report_delivered` audit row in `src/agent/graph/nodes/reporter.py` (FR-013, FR-014; depends on T024)
+- [x] T052 [US1] Slack-mock FastAPI service (`POST /messages`, `POST /messages/{id}/approve|reject` → signed callback to agent) in `deploy/slack_mock/app.py` + `deploy/slack_mock/Dockerfile`
+- [x] T053 [US1] Wire the graph in `src/agent/graph/builder.py`: `ingest → router → {application|network|database|unknown-short-circuit} → reporter`; conditional edge keyed on `classification` only (depends on T026, T045, T046, T047-T050, T051)
 - [ ] T054 [US1] Fixture cluster manifests (App/Network/Database failure modes) at `tests/fixtures/cluster/{application,network,database}.yaml`
 - [ ] T055 [US1] `fire_webhook` helper + HMAC sign script at `tests/fixtures/fire_webhook.py` and `scripts/sign.sh`
 
@@ -164,12 +164,12 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 
 ### Implementation for US2
 
-- [ ] T067 [P] [US2] Approver role-check (default mapping: `triage-approver` → all MVP catalog actions per research.md §R11) in `src/agent/auth.py` (95% coverage tier)
-- [ ] T068 [P] [US2] Short-lived signed approval token (carries `proposed_fix_fingerprint` + `correlation_id` + `exp`) issuer/verifier in `src/agent/approval_token.py` (used by Solver pre-flight per contracts/mcp_tools.md)
-- [ ] T069 [US2] Approval callbacks `POST /callbacks/slack/approve|reject` (HMAC verify → resolve Report → status guard → deadline check → role check → persist `ApprovalEvent` → flip Report status → `Command(resume=...)` graph) in `src/agent/api/callbacks.py` (depends on T024, T026, T067, T068)
-- [ ] T070 [US2] LangGraph `interrupt` after Reporter + conditional resume edge keyed on `approval_status` only, in `src/agent/graph/builder.py` (extends T053; rejected/expired terminate without Solver)
-- [ ] T071 [US2] Approval-deadline watcher (background task that flips PENDING → EXPIRED at `approval_deadline` and writes an `approval_event` audit row with `action: reject, reason: expired`) in `src/agent/api/expiry.py`
-- [ ] T072 [US2] Slack-mock click → signed callback handler in `deploy/slack_mock/app.py` (extends T052; same file — must run sequentially with T052)
+- [x] T067 [P] [US2] Approver role-check (default mapping: `triage-approver` → all MVP catalog actions per research.md §R11) in `src/agent/auth.py` (95% coverage tier)
+- [x] T068 [P] [US2] Short-lived signed approval token (carries `proposed_fix_fingerprint` + `correlation_id` + `exp`) issuer/verifier in `src/agent/approval_token.py` (used by Solver pre-flight per contracts/mcp_tools.md)
+- [x] T069 [US2] Approval callbacks `POST /callbacks/slack/approve|reject` (HMAC verify → resolve Report → status guard → deadline check → role check → persist `ApprovalEvent` → flip Report status → `Command(resume=...)` graph) in `src/agent/api/callbacks.py` (depends on T024, T026, T067, T068)
+- [x] T070 [US2] LangGraph `interrupt` after Reporter + conditional resume edge keyed on `approval_status` only, in `src/agent/graph/builder.py` (extends T053; rejected/expired terminate without Solver)
+- [x] T071 [US2] Approval-deadline watcher (background task that flips PENDING → EXPIRED at `approval_deadline` and writes an `approval_event` audit row with `action: reject, reason: expired`) in `src/agent/api/expiry.py`
+- [x] T072 [US2] Slack-mock click → signed callback handler in `deploy/slack_mock/app.py` (extends T052; same file — must run sequentially with T052)
 
 ### Unit + integration tests for US2
 
@@ -200,8 +200,8 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 - [x] T081 [US3] Write-tool guards (admission/PDB/quota refusal handler, kill-switch check, no-force enforcement) shared across write tools in `src/mcp_server/tools/_guards.py` (95% coverage tier; depends on T030, T033)
 - [ ] T082 [P] [US3] Per-target Solver serialization lock (no concurrent mutations on the same resource per FR-026) in `src/agent/solver_lock.py`
 - [ ] T083 [US3] Solver node (NO LLM): verify `proposed_fix.fingerprint` against frozen Report; capture pre-state via `get_pod`/Deployment read; refuse with `failure: pre-state-incomplete` if FR-022 fields missing; call the matching MCP write tool with the signed approval token; wait verification window; capture post-state; compute Inverse Action via catalog mapping over `pre_state`; build `SolverRun` in `src/agent/graph/nodes/solver.py` (depends on T015, T016, T024, T031, T068, T077-T082)
-- [ ] T084 [US3] Reporter follow-up message (success/partial/failure + post-state summary + Inverse Action; on `partial` surface Inverse prominently) extending `src/agent/graph/nodes/reporter.py` (extends T051 — same file, run sequentially)
-- [ ] T085 [US3] Wire Solver into graph (resume after interrupt when `approval_status == APPROVED` → Solver → Reporter follow-up; APPROVED+catalog-mismatch path terminates with `failed`) in `src/agent/graph/builder.py` (extends T070 — same file, run sequentially)
+- [x] T084 [US3] Reporter follow-up message (success/partial/failure + post-state summary + Inverse Action; on `partial` surface Inverse prominently) extending `src/agent/graph/nodes/reporter.py` (extends T051 — same file, run sequentially)
+- [x] T085 [US3] Wire Solver into graph (resume after interrupt when `approval_status == APPROVED` → Solver → Reporter follow-up; APPROVED+catalog-mismatch path terminates with `failed`) in `src/agent/graph/builder.py` (extends T070 — same file, run sequentially)
 
 ### Unit + integration tests for US3
 
