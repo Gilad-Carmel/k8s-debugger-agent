@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# uv — venv only; uv.lock and .python-version are committed
+# (nothing extra needed here)
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# Distribution / packaging
+pip-wheel-metadata/
+share/python-wheels/
+*.whl
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+deploy/dev.env
+settings.local.json
+*.pem
+*.key
+*.crt
+*.secret.yaml
+secrets/
+.kube/
+kubeconfig*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# LangGraph / SQLite checkpoints
+*.sqlite
+*.db
+
+# Logs
+*.log
+logs/
+
+# Docker
+.dockerignore

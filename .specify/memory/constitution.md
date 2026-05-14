@@ -1,44 +1,53 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: (template, unratified) → 1.0.0
-Bump rationale: Initial ratification. The prior file contained only
-template placeholders; this is the first concrete constitution, so it
-establishes the 1.0.0 baseline rather than amending an existing version.
+Version change: 1.0.0 → 1.1.0
+Bump rationale: MINOR — adds four new engineering-discipline principles
+(VI Code Quality, VII Testing Standards, VIII User Experience
+Consistency, IX Performance Requirements). No existing principle is
+removed or redefined; no governance rule is relaxed. Additive change,
+backward-compatible with v1.0.0 plans and specs.
 
-Renamed principles:
-  - [PRINCIPLE_1_NAME] → I. Safety-First Autonomy
-  - [PRINCIPLE_2_NAME] → II. Cost-Conscious by Design
-  - [PRINCIPLE_3_NAME] → III. Developer Experience as a Product
-  - [PRINCIPLE_4_NAME] → IV. Evidence-Backed Triage (NON-NEGOTIABLE)
-  - [PRINCIPLE_5_NAME] → V. Observability & Reversibility
+Modified principles:
+  - I. Safety-First Autonomy — unchanged
+  - II. Cost-Conscious by Design — unchanged
+  - III. Developer Experience as a Product — unchanged (scoped to
+    on-call/incident UX; broader cross-surface UX consistency now
+    lives in VIII)
+  - IV. Evidence-Backed Triage (NON-NEGOTIABLE) — unchanged
+  - V. Observability & Reversibility — unchanged
 
-Added sections:
-  - Operational Constraints & Compliance Standards (replaces [SECTION_2_NAME])
-  - Development Workflow & Quality Gates (replaces [SECTION_3_NAME])
-  - Governance (filled in)
+Added principles:
+  - VI. Code Quality
+  - VII. Testing Standards (NON-NEGOTIABLE)
+  - VIII. User Experience Consistency
+  - IX. Performance Requirements (DevOps SLOs)
+
+Added sections: none beyond the four new principles. "Development
+Workflow & Quality Gates" expanded to reference VI–IX in CI gates.
 
 Removed sections: none.
 
 Templates requiring updates:
   - ✅ .specify/templates/plan-template.md — "Constitution Check" gate
-    references principles by name; no edits needed (gate text is generic
-    and now derives from this file). Plans authored against this
-    constitution MUST enumerate gates I–V.
-  - ✅ .specify/templates/spec-template.md — compatible; no edits needed.
-    Specs continue to be implementation-agnostic; safety/cost/DX appear
-    as constraints surfaced in Success Criteria.
-  - ✅ .specify/templates/tasks-template.md — compatible; task
-    categories (setup, foundational, user-story, polish) accommodate
-    safety/cost/observability tasks under "Polish & Cross-Cutting
-    Concerns" without structural change.
-  - ✅ .specify/templates/checklist-template.md — compatible; checklists
-    are generated per-feature.
-  - ⚠ .claude/skills/speckit-*/SKILL.md — no references to specific
-    principle names found; no edits required at this time.
+    is generic and now enumerates Principles I–IX. Existing plans
+    against v1.0.0 should be re-checked at next edit; no rewrite
+    required.
+  - ✅ .specify/templates/spec-template.md — compatible; specs remain
+    implementation-agnostic. SLO targets (IX) surface in Success
+    Criteria as already practiced.
+  - ✅ .specify/templates/tasks-template.md — compatible; testing,
+    perf, and code-quality tasks fit existing categories (Setup,
+    Foundational, Polish & Cross-Cutting).
+  - ✅ .specify/templates/checklist-template.md — compatible.
+  - ⚠ specs/001-log-triage-classifier/ — existing spec predates this
+    amendment. No content changes required (it already meets VII's
+    eval-suite expectations via SC-001 and IX's latency SLOs via
+    SC-002), but the plan generated from it MUST enumerate gates
+    I–IX in its Constitution Check section.
 
-Follow-up TODOs: none. RATIFICATION_DATE set to today (2026-05-14) as
-this is the first ratified version.
+Follow-up TODOs: none. Coverage floors and SLO numbers in VII/IX are
+written as defaults; tighten them per feature in plan.md if needed.
 -->
 
 # K8s Debugger Agent Constitution
@@ -156,6 +165,134 @@ how do I undo it?" — both for incident review and for regulatory
 scrutiny. Reversibility is not optional when the agent has write
 access.
 
+### VI. Code Quality
+
+The platform's code is read more often than it is written and is
+operated under incident pressure. It MUST stay legible, type-safe,
+and free of dead weight:
+
+- Every change MUST pass the project's linter and formatter in CI;
+  disabling rules in-line requires a comment naming the reason and
+  is reviewed.
+- The language's static type checker MUST run in CI at the strictest
+  practical setting; `any` / unchecked escape hatches require an
+  inline justification.
+- Cyclomatic complexity for any single function MUST stay under 15;
+  exceeding it requires a refactor or an explicit waiver in PR.
+- Dead code, commented-out blocks, and "TODO" markers without a
+  linked issue MUST NOT land on `main`.
+- Every PR requires at least one human reviewer (two for changes
+  touching mutating tools, authorization scope, model dependencies,
+  or this constitution). Self-approval is not permitted on `main`.
+- New runtime dependencies MUST be vetted for license, maintenance
+  signal (recent commits, open security advisories), and supply-chain
+  posture; the vetting result is recorded in the PR.
+- Public functions and exported types MUST have a one-line purpose
+  comment when intent is not obvious from the name. Internal code
+  follows the "no comments unless the WHY is non-obvious" rule from
+  the project's collaborator guide.
+
+**Rationale**: An agentic platform that mutates production needs to
+be auditable by humans under stress. Sloppy code that "works" is a
+liability — when something goes wrong, the people reading it have
+seconds, not afternoons.
+
+### VII. Testing Standards (NON-NEGOTIABLE)
+
+Tests are how we keep the safety, cost, and evidence guarantees
+honest. They are not optional:
+
+- Every public function, tool boundary, and decision rule MUST have
+  unit tests. Pure-logic modules MUST hit at least 85% line and
+  branch coverage; safety-critical modules (authorization, mutation
+  gating, secret redaction, cost ceiling enforcement) MUST hit 95%
+  and MUST include negative-path tests.
+- Every integration with an external system (Kubernetes, MCP, LLM
+  provider, observability backend) MUST have contract tests against
+  a recorded or sandboxed fixture. The fixture MUST be refreshed on a
+  documented cadence.
+- LLM-driven behaviors MUST have an eval suite (a golden set of
+  labeled inputs with expected outputs and acceptable variance).
+  The eval suite runs in CI; regressions block merge.
+- Hallucination tests are mandatory for any feature that surfaces a
+  classification, recommendation, or summary derived from an LLM.
+  A claim emitted without supporting evidence is a test failure.
+- New mutating tools MUST ship with at least one refusal-path test
+  (asserting the tool refuses without authorization) and at least
+  one reversal-recipe test (asserting the recipe undoes the change
+  on a fixture).
+- Flaky tests are tracked, quarantined within 24 hours of detection,
+  and fixed or deleted within one sprint. Quarantined tests MUST NOT
+  silently mask real regressions.
+- Tests MUST NOT mock the system under test; mock only the
+  collaborators across a process or network boundary.
+
+**Rationale**: Without strong testing, the safety, evidence, and
+cost principles become aspirational. The cost of a missed test is
+borne by customers during outages — far more expensive than the test.
+
+### VIII. User Experience Consistency
+
+The platform speaks to humans across multiple surfaces (chat, CLI,
+web, API). Those surfaces MUST present the same product, not three
+different products:
+
+- Triage outputs MUST share a single canonical schema (top label,
+  confidence, cited evidence, runner-ups, caveats). Channel-specific
+  rendering is allowed; the underlying fields are not.
+- Labels, severities, and units MUST be drawn from a single shared
+  vocabulary. Mixing `error` / `failed` / `failure` for the same
+  state is a defect.
+- Error messages MUST follow a single template: what failed, why,
+  what to try next. Stack traces are not user-facing output.
+- The same triage request issued against the same state MUST produce
+  the same shape and ordering of fields across surfaces, even if
+  prose differs.
+- Times, durations, byte sizes, and money values MUST use the
+  product-wide formatting standard. ISO-8601 for timestamps, IEC
+  binary prefixes for bytes (KiB, MiB), no surface-specific
+  variants.
+- Net-new user-facing strings MUST go through the shared
+  copy/i18n surface; ad-hoc inline strings on individual surfaces
+  are a defect.
+
+**Rationale**: When an engineer hits the platform during an incident,
+inconsistent labels and shapes across surfaces cost trust and time.
+Consistency lets users learn the product once and apply it
+everywhere, which is a force-multiplier on Principle III.
+
+### IX. Performance Requirements (DevOps SLOs)
+
+DevOps tooling is judged on latency under pressure. Performance is
+a first-class engineering discipline with explicit SLOs and
+enforced budgets:
+
+- Every user-facing flow MUST declare SLOs for: (a) time-to-first-
+  token (or first-meaningful-byte), (b) end-to-end p50 and p95
+  latency, (c) per-flow cost ceiling. Defaults: TTFT ≤ 3s, p50 ≤ 30s,
+  p95 ≤ 60s for interactive triage; tighter per-feature targets are
+  encouraged in the relevant plan.
+- Performance budgets MUST be enforced in CI on a representative
+  benchmark fixture. Regressions beyond the budget block merge; an
+  override requires a documented justification in the PR and a
+  follow-up issue.
+- Tool calls to external systems (K8s API, MCP, LLM) MUST honor
+  rate-limit backpressure and MUST retry with bounded, jittered
+  backoff. Unbounded retries are a defect.
+- Memory and concurrency budgets MUST be declared for any service
+  exposed to user load; OOMs and unbounded fan-out are defects.
+- Hot paths MUST be profilable in production via the shared
+  observability stack; "we'll add profiling later" is not acceptable
+  for code shipping to production.
+- Data freshness SLOs MUST be declared for any cached or summarized
+  cluster state surfaced to users. Stale data MUST be labeled with
+  its age.
+
+**Rationale**: An on-call engineer waiting 90 seconds for triage is
+no longer triaging — they are debugging the tool. Treating
+performance as an SLO with CI enforcement, not as a polish item,
+is what keeps the platform usable when it matters most.
+
 ## Operational Constraints & Compliance Standards
 
 - **Default posture**: Production cluster credentials are read-only.
@@ -177,19 +314,29 @@ access.
 ## Development Workflow & Quality Gates
 
 - **Constitution Check (gate)**: Every `/speckit-plan` MUST include a
-  Constitution Check section that enumerates Principles I–V and states,
+  Constitution Check section that enumerates Principles I–IX and states,
   for each, either "compliant" or "violation + justification." Plans
   with unjustified violations MUST NOT proceed to `/speckit-tasks`.
-- **Reviews**: All PRs require at least one human reviewer. PRs that
-  introduce a new mutating tool, a new model dependency, or a change to
-  authorization scope require a second reviewer from the safety owners.
-- **CI gates**: Builds MUST fail on (a) cost regression beyond the
-  per-flow budget, (b) latency regression beyond the budgeted p95,
-  (c) missing audit log entries in integration tests for any mutating
-  action, (d) eval-suite regressions on the hallucination benchmark.
+- **Reviews**: All PRs require at least one human reviewer (Principle
+  VI). PRs that introduce a new mutating tool, a new model dependency,
+  or a change to authorization scope require a second reviewer from the
+  safety owners.
+- **CI gates**: Builds MUST fail on:
+  - (a) cost regression beyond the per-flow budget (Principle II);
+  - (b) latency regression beyond the budgeted p95 (Principle IX);
+  - (c) missing audit log entries in integration tests for any mutating
+    action (Principle V);
+  - (d) eval-suite or hallucination-benchmark regressions
+    (Principles IV and VII);
+  - (e) coverage drop below the per-module floor — 85% pure logic, 95%
+    safety-critical (Principle VII);
+  - (f) linter, formatter, or strict-type-check failures (Principle VI);
+  - (g) introduction of a user-facing string outside the shared
+    copy/i18n surface or use of a label outside the shared vocabulary
+    (Principle VIII).
 - **New mutating tool checklist**: kill switch wired, reversal recipe
   emitted, integration test covering both happy-path and refusal-path,
-  cost and latency budgets declared.
+  cost and latency budgets declared, eval entry added if LLM-backed.
 - **Documentation**: Public behavior changes MUST update the relevant
   spec under `specs/` and the user-facing changelog in the same PR.
 
@@ -228,4 +375,4 @@ Findings are tracked as issues and triaged within one sprint.
 collaborators lives in `CLAUDE.md` at the repo root; it MUST defer
 to this constitution on any conflict.
 
-**Version**: 1.0.0 | **Ratified**: 2026-05-14 | **Last Amended**: 2026-05-14
+**Version**: 1.1.0 | **Ratified**: 2026-05-14 | **Last Amended**: 2026-05-14
