@@ -49,6 +49,8 @@ dev = [
     # Coverage
     "coverage[toml]",
     "pytest-cov",
+    # Dev utilities (scripts/check_openrouter.py)
+    "python-dotenv",
 ]
 
 [build-system]
