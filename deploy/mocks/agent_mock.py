@@ -92,6 +92,7 @@ def _sign(body: bytes) -> str:
 
 
 def _track_background_task(coro: Coroutine[Any, Any, None]) -> None:
+    """Keep a strong reference to a background task until it completes."""
     task = asyncio.create_task(coro)
     _background_tasks.add(task)
 
