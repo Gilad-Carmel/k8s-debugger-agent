@@ -20,12 +20,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import httpx
 import pytest
 
 from src.agent.graph.builder import build_graph
 from src.agent.graph.state import WorkflowState
-from src.agent.settings import settings
 from src.shared.schemas import (
     FilteredEvidence,
     Incident,
@@ -35,32 +33,7 @@ from src.shared.schemas import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Skip the whole module if the inference server is not reachable.
-# ---------------------------------------------------------------------------
-
-def _server_reachable() -> bool:
-    """Return True if the configured LLM base URL responds within 3 s."""
-    try:
-        url = settings.llm_base_url.rstrip("/").removesuffix("/v1") + "/v1/models"
-        httpx.get(url, timeout=3.0)
-        return True
-    except Exception:
-        return False
-
-
 pytestmark = pytest.mark.integration
-
-if not _server_reachable():
-    pytestmark = [
-        pytest.mark.integration,
-        pytest.mark.skip(
-            reason=(
-                f"LLM server not reachable at {settings.llm_base_url} — "
-                "start your inference server and re-run."
-            )
-        ),
-    ]
 
 
 # ---------------------------------------------------------------------------

@@ -26,7 +26,6 @@ Notes on method="json_mode":
 from __future__ import annotations
 
 import pytest
-import httpx
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -35,33 +34,7 @@ from pydantic import BaseModel, Field
 from src.agent.settings import settings
 
 
-# ---------------------------------------------------------------------------
-# Skip the whole module if the inference server is not reachable.
-# ---------------------------------------------------------------------------
-
-def _server_reachable() -> bool:
-    """Return True if the configured LLM base URL responds successfully within 3 s."""
-    try:
-        # Hit the /models endpoint — present on every OpenAI-compatible server.
-        url = settings.llm_base_url.rstrip("/").removesuffix("/v1") + "/v1/models"
-        response = httpx.get(url, timeout=3.0)
-        return response.status_code == 200
-    except Exception:
-        return False
-
-
 pytestmark = [pytest.mark.integration]
-
-# Applied at collection time so the skip message is clear.
-if not _server_reachable():
-    pytestmark.append(
-        pytest.mark.skip(
-            reason=(
-                f"LLM server not reachable at {settings.llm_base_url} — "
-                "start your inference server and re-run."
-            )
-        )
-    )
 
 
 # ---------------------------------------------------------------------------

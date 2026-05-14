@@ -192,14 +192,26 @@ def router_node(state: WorkflowState) -> WorkflowState:
     # server supports, and the system prompt describes the full JSON schema.
     # include_raw=True gives us the AIMessage for usage_metadata extraction.
     # ------------------------------------------------------------------
-    llm = _build_llm()
-    structured: Any = llm.with_structured_output(
-        _RouterDecision,
-        include_raw=True,
-        method="json_mode",
-    )
-
-    result: dict[str, Any] = structured.invoke(messages)  # type: ignore[assignment]
+    try:
+        llm = _build_llm()
+        structured: Any = llm.with_structured_output(
+            _RouterDecision,
+            include_raw=True,
+            method="json_mode",
+        )
+        result: dict[str, Any] = structured.invoke(messages)  # type: ignore[assignment]
+    except Exception:
+        logger.exception("router LLM call failed; falling back to Unknown")
+        return {  # type: ignore[return-value]
+            "routing": RoutingDecision(
+                domain="Unknown",
+                confidence="low",
+                cited_evidence=[],
+                runners_up=[],
+                model=settings.llm_router_model,
+                tokens=0,
+            )
+        }
 
     raw_message = result.get("raw")
     parsed: _RouterDecision | None = result.get("parsed")
@@ -213,9 +225,9 @@ def router_node(state: WorkflowState) -> WorkflowState:
     # Defensive path: parsing failed → Unknown domain.
     # ------------------------------------------------------------------
     if parsed is None or parse_error is not None:
-        print(
-            f"[router_node] WARNING: structured output parse failed "
-            f"({parse_error!r}); falling back to Unknown"
+        logger.warning(
+            "structured output parse failed (%r); falling back to Unknown",
+            parse_error,
         )
         return {  # type: ignore[return-value]
             "routing": RoutingDecision(
