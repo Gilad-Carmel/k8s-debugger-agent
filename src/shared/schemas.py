@@ -420,7 +420,82 @@ class Incident(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# 13. ToolError  — machine-readable error returned by any MCP tool call
+# 13. ContainerState  (frozen) — per-container runtime state from get_pod
+# ---------------------------------------------------------------------------
+class ContainerState(BaseModel):
+    """Runtime state of a single container, as returned by the Kubernetes API."""
+
+    model_config = ConfigDict(frozen=True)
+
+    state: str = Field(
+        ...,
+        description="One of 'Waiting', 'Running', 'Terminated'.",
+    )
+    reason: Optional[str] = Field(
+        default=None,
+        description="CrashLoopBackOff, OOMKilled, Completed, etc.",
+    )
+    message: Optional[str] = Field(default=None)
+    exit_code: Optional[int] = Field(default=None)
+    started_at: Optional[datetime] = Field(default=None)
+    finished_at: Optional[datetime] = Field(default=None)
+
+
+# ---------------------------------------------------------------------------
+# 14. PodSnapshot  — pre/post state captured by MCP write tools (FR-022)
+# ---------------------------------------------------------------------------
+class PodSnapshot(BaseModel):
+    """Immutable point-in-time snapshot of a pod used for pre/post verification."""
+
+    phase: str = Field(
+        ...,
+        description="Pending | Running | Succeeded | Failed | Unknown",
+    )
+    restart_count_by_ctr: Dict[str, int] = Field(
+        default_factory=dict,
+        description="restart_count per container name.",
+    )
+    container_states: Dict[str, ContainerState] = Field(
+        default_factory=dict,
+        description="ContainerState per container name.",
+    )
+    ready: bool = Field(..., description="True if all containers are Ready.")
+    resource_version: str = Field(
+        ..., description="K8s resourceVersion for optimistic-concurrency reads."
+    )
+    observed_at: datetime = Field(..., description="Wall-clock when snapshot was taken.")
+
+
+# ---------------------------------------------------------------------------
+# 15. WriteToolOutput  — output shape shared across all MCP write tools
+# ---------------------------------------------------------------------------
+class WriteToolOutput(BaseModel):
+    """Normalised result returned by every MCP write tool."""
+
+    outcome: str = Field(
+        ...,
+        description="'applied' | 'refused' | 'error'",
+    )
+    pre_state: Dict[str, Any] = Field(
+        ...,
+        description="Snapshot before the action (FR-022).",
+    )
+    post_state: Dict[str, Any] = Field(
+        ...,
+        description="Snapshot after the verification window.",
+    )
+    reversal_recipe: ReversalRecipe = Field(
+        ...,
+        description="Inverse Action computed at execution time from pre_state.",
+    )
+    error: Optional[str] = Field(
+        default=None,
+        description="Populated on outcome == 'error'.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# 16. ToolError  — machine-readable error returned by any MCP tool call
 # ---------------------------------------------------------------------------
 class ToolError(BaseModel):
     """

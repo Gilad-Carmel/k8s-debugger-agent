@@ -45,6 +45,7 @@ share/python-wheels/
 .env.*
 !.env.example
 deploy/dev.env
+settings.local.json
 *.pem
 *.key
 *.crt
