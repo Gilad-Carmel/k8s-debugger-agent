@@ -419,6 +419,7 @@ def reporter_node(state: WorkflowState) -> WorkflowState:
     )
 
     try:
+        # Presence check only: RuntimeError means there is no running loop.
         asyncio.get_running_loop()
         logger.warning(
             "report delivery skipped corr=%s reason=running_event_loop",
@@ -436,5 +437,6 @@ def reporter_node(state: WorkflowState) -> WorkflowState:
             )
         except Exception:
             logger.exception("report delivery failed corr=%s", correlation_id)
+            report = report.model_copy(update={"status": "failed"})
 
     return {"report": report}
