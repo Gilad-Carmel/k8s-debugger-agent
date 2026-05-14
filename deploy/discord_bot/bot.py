@@ -65,9 +65,10 @@ def _sign(body: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 class ApprovalView(discord.ui.View):
-    def __init__(self, correlation_id: str) -> None:
+    def __init__(self, correlation_id: str, record: dict[str, Any]) -> None:
         super().__init__(timeout=1800)  # matches 30-min approval window
         self.correlation_id = correlation_id
+        self.record = record  # kept so we can rebuild the embed on click
 
     @discord.ui.button(label="Approve remediation", style=discord.ButtonStyle.green)
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -78,11 +79,21 @@ class ApprovalView(discord.ui.View):
         await self._forward(interaction, "reject")
 
     async def _forward(self, interaction: discord.Interaction, action: str) -> None:
-        # Disable buttons immediately so the user gets instant feedback
+        # Disable all buttons
         for item in self.children:
             item.disabled = True  # type: ignore[union-attr]
-        await interaction.response.edit_message(view=self)
 
+        # Optimistically update the embed to show the new status immediately,
+        # before waiting for the agent to respond
+        new_status = "approved" if action == "approve" else "rejected"
+        updated_record: dict[str, Any] = {
+            **self.record,
+            "report": {**self.record.get("report", {}), "status": new_status},
+        }
+        embed = _build_embed(updated_record)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+        # Forward to the agent
         payload: dict[str, Any] = {
             "correlation_id": self.correlation_id,
             "actor": {
@@ -107,11 +118,8 @@ class ApprovalView(discord.ui.View):
                     },
                 )
                 resp.raise_for_status()
-            reply = "Approved — solver running..." if action == "approve" else "Rejected."
         except Exception as exc:
-            reply = f"Callback failed: {exc}"
-
-        await interaction.followup.send(reply, ephemeral=True)
+            logger.warning("callback failed corr=%s: %s", self.correlation_id, exc)
 
     async def on_timeout(self) -> None:
         for item in self.children:
@@ -282,7 +290,7 @@ async def _post_or_update(record: dict[str, Any]) -> None:
         return
 
     embed = _build_embed(record)
-    view = ApprovalView(corr) if fix and status == "pending" else None
+    view = ApprovalView(corr, record) if fix and status == "pending" else None
 
     existing = _posted.get(corr)
     if existing:
