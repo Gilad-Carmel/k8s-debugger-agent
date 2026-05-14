@@ -49,7 +49,7 @@ def check_balance(api_key: str) -> None:
     limit_str = f"${limit:.4f}" if limit is not None else "unlimited"
     remaining_str = f"${remaining:.4f}" if remaining is not None else "N/A"
     used_str = f"${usage:.4f}" if usage is not None else "N/A"
-    pct = f" ({100 * usage / limit:.1f}% used)" if limit else ""
+    pct = f" ({100 * usage / limit:.1f}% used)" if (limit and usage is not None) else ""
 
     print(f"Limit: {limit_str}")
     print(f"Used: {used_str}{pct}")
