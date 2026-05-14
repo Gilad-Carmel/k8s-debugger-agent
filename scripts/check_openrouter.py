@@ -22,6 +22,14 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 import httpx
 
 
+def _to_float(value: object) -> float | None:
+    """Coerce an API value to float, or return None if not numeric."""
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 def check_balance(api_key: str) -> None:
     r = httpx.get(
         "https://openrouter.ai/api/v1/key",
@@ -33,9 +41,9 @@ def check_balance(api_key: str) -> None:
         sys.exit(1)
 
     data = r.json().get("data", {})
-    limit = data.get("limit")
-    remaining = data.get("limit_remaining")
-    usage = data.get("usage", 0)
+    limit = _to_float(data.get("limit"))
+    remaining = _to_float(data.get("limit_remaining"))
+    usage = _to_float(data.get("usage"))
     is_free = data.get("is_free_tier", False)
 
     limit_str = f"${limit:.4f}" if limit is not None else "unlimited"

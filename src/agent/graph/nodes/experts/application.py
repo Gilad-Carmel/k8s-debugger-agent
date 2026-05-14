@@ -19,8 +19,8 @@ Domain patterns recognised:
 Constitution compliance (Principle IV, NON-NEGOTIABLE):
   The system prompt below forbids any factual claim not tied to a numbered
   evidence index.  The base class ``_assert_citations_grounded`` provides the
-  runtime enforcement; the eval suite in ``tests/eval/hallucination_suite.py``
-  provides downstream CI coverage.
+  runtime enforcement; unit tests in ``tests/unit/`` and integration tests in
+  ``tests/integration/test_graph_run.py`` provide downstream CI coverage.
 """
 
 from __future__ import annotations

@@ -31,8 +31,9 @@ Design (research.md R2, plan.md §Technical Context, spec FR-009..FR-012):
     ``FilteredEvidence.hit_lines``; mapping to ``LogExcerpt`` objects happens
     server-side.  This is the primary mechanism that prevents hallucinated
     provenance (Principle IV).
-  - Audit fields (``model``, ``tokens``) come from ``usage_metadata`` on the
-    raw ``AIMessage``, not from LLM-generated text (Principle V, FR-028).
+  - Audit field ``tokens`` comes from ``usage_metadata`` on the raw
+    ``AIMessage``; ``model`` comes from ``response_metadata`` (both from the
+    raw ``AIMessage``, not from LLM-generated text — Principle V, FR-028).
 
 Constitution compliance:
   - **Principle IV (NON-NEGOTIABLE)**: ``_assert_citations_grounded`` raises
@@ -41,7 +42,9 @@ Constitution compliance:
   - **Principle I**: ``validate_action`` accepts only the four catalog entries
     and enforces per-action parameter shapes; anything outside the catalog ⇒
     ``proposed_fix=None`` (no Approve button).
-  - **Principle V**: model + tokens always from ``usage_metadata``.
+  - **Principle V**: tokens from ``usage_metadata``; model from
+    ``response_metadata`` (falls back to ``settings.llm_expert_model`` when
+    the server omits it, e.g. Ollama/local proxies).
   - **Principle VI**: two-reviewer rule applies to any PR that changes
     ``PERMISSION_SCOPES``, ``LLM_EXPERT_MODEL``/``LLM_BASE_URL``, or this
     file's core pipeline.
@@ -407,6 +410,17 @@ class BaseExpert(ABC):
 
         usage: dict[str, Any] = getattr(raw_message, "usage_metadata", None) or {}
         total_tokens: int = int(usage.get("total_tokens", 0))
+        resp_meta: dict[str, Any] = (
+            getattr(raw_message, "response_metadata", None) or {}
+        )
+        # langchain-openai stores the model as "model_name"; plain "model" is
+        # the fallback used by some Ollama-compatible proxies.  Fall all the
+        # way back to the settings value when the server omits the field.
+        model_id: str = (
+            resp_meta.get("model_name")
+            or resp_meta.get("model")
+            or settings.llm_expert_model
+        )
 
         if parsed is None or parse_error is not None:
             logger.warning(
@@ -499,7 +513,7 @@ class BaseExpert(ABC):
             confidence=confidence,  # type: ignore[arg-type]
             runner_up_causes=runner_ups,
             proposed_fix=proposed_fix,
-            model=settings.llm_expert_model,
+            model=model_id,
             tokens=total_tokens,
         )
 
@@ -515,9 +529,9 @@ class BaseExpert(ABC):
         """Raise AssertionError if any cited excerpt is not in hit_lines.
 
         This is the runtime enforcement of Constitution IV (Evidence-Backed
-        Triage, NON-NEGOTIABLE).  The eval suite in
-        ``tests/eval/hallucination_suite.py`` exercises this via the same
-        guard to ensure the check catches regressions in CI.
+        Triage, NON-NEGOTIABLE).  Unit tests in ``tests/unit/`` and the
+        integration test in ``tests/integration/test_graph_run.py`` exercise
+        this guard to ensure the check catches regressions in CI.
 
         Failure is treated as a Sev-2 defect: "Hallucinated facts about
         cluster state require a regression test before close."
