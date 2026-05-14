@@ -39,7 +39,7 @@ from src.agent.graph.nodes.experts.application import application_expert_node
 from src.agent.graph.nodes.experts.database import database_expert_node
 from src.agent.graph.nodes.experts.network import network_expert_node
 from src.agent.graph.nodes.ingest import ingest_node
-from src.agent.graph.nodes.reporter import reporter_node
+from src.agent.graph.nodes.reporter import reporter_followup_node, reporter_node
 from src.agent.graph.nodes.router import route_after_router, router_node
 from src.agent.graph.nodes.solver import solver_node
 from src.agent.graph.state import WorkflowState
@@ -71,6 +71,7 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> Any:
     builder.add_node("database_expert", database_expert_node)
     builder.add_node("reporter", reporter_node)
     builder.add_node("solver", solver_node)
+    builder.add_node("reporter_followup", reporter_followup_node)
 
     # Linear entry
     builder.add_edge(START, "ingest")
@@ -103,7 +104,8 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> Any:
             END: END,
         },
     )
-    builder.add_edge("solver", END)
+    builder.add_edge("solver", "reporter_followup")
+    builder.add_edge("reporter_followup", END)
 
     compile_kwargs: dict[str, Any] = {"interrupt_before": ["solver"]}
     if checkpointer is not None:
