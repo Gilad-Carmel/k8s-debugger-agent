@@ -65,7 +65,7 @@ Once a fix is approved, the Solver agent executes the exact action that was show
 **Acceptance Scenarios**:
 
 1. **Given** an approved fix of type "restart pod," **When** the Solver executes, **Then** the pod is restarted via the platform's tool layer, the follow-up message reports the new pod status, and the Inverse Action is reported as `None` (restart is transient).
-2. **Given** an approved fix of type "rollback deployment to revision N," **When** the Solver executes, **Then** the deployment is rolled back, the follow-up message reports the new revision, and the Inverse Action is `rollback-deployment-to-revision(pre_state.revision)`, verified against `pre_state.image_tag`.
+2. **Given** an approved fix of type "rollback deployment to revision N," **When** the Solver executes, **Then** the deployment is rolled back, the follow-up message reports the new revision, and the Inverse Action is `rollback-deployment(to_revision=pre_state.revision)`, verified against `pre_state.image_tag`.
 3. **Given** an approved fix whose action type is NOT in the allowed-remediation catalog, **When** the Solver evaluates it, **Then** the Solver refuses to execute and reports the refusal — even if the approval click was successful.
 4. **Given** the proposed fix shown to the approver differs from the action the Solver is about to execute (e.g., expert re-ran and produced a new recommendation between approval and execution), **When** the Solver detects the mismatch, **Then** it refuses, reports the mismatch, and requires re-approval.
 5. **Given** the Solver action succeeds at the API level but the post-state check fails (e.g., new pod crashlooping), **When** the Solver evaluates the post-state, **Then** the follow-up reports "partial / verification failed" and surfaces the Inverse Action prominently (or, if `None`, recommends manual intervention).
@@ -141,7 +141,7 @@ Every alert ingestion, classification decision, expert diagnosis, approval click
 - **FR-020**: On an authorized approval, the Solver agent MUST execute exactly the action shown in the report — same resource, same action, same parameters. If anything differs, the Solver MUST refuse and require re-approval.
 - **FR-021**: The Solver MUST refuse any action not in the allowed-remediation catalog, regardless of approval state.
 - **FR-022**: For every executed action, the Solver MUST capture the pre-state snapshot, the action issued, the post-state observed after a verification window, and the computed Inverse Action. The pre-state snapshot MUST explicitly persist the fields required to compute the Inverse Action for the target resource, at minimum:
-    - **For a Deployment target**: `replica_count`, `image_tag`, and current `revision` (so `scale-deployment` and `rollback-deployment-to-revision` are both invertible).
+    - **For a Deployment target**: `replica_count`, `image_tag`, and current `revision` (so `scale-deployment` and `rollback-deployment` are both invertible).
     - **For a Pod target**: `restart_count`, `phase`, and the parent-controller reference (so `restart-pod` / `delete-pod` outcomes are evaluable even though their inverse is `None`).
     If a required field cannot be captured before the forward action is issued, the Solver MUST refuse to execute and report `failure: pre-state-incomplete`.
 - **FR-023**: After execution, the Solver MUST post a follow-up message in the same chat thread reporting outcome (`success` / `partial` / `failure`), the observed post-state summary, and the computed Inverse Action (the catalog action plus the concrete parameters drawn from `pre_state`), or `None` if the forward action is transient.
@@ -207,16 +207,23 @@ The workflow is implemented as a state machine; nodes do not pass arguments to e
 
 ## Assumptions
 
-- **Allowed-remediation catalog (MVP)**: `restart-pod`, `rollback-deployment-to-previous-revision`, `scale-deployment` (within a configured min/max), and `delete-pod-to-trigger-reschedule`. Each entry has a permission scope and a fixed **Inverse Action mapping** that the Solver applies at execution time, drawing parameters from the pre-state snapshot:
+- **Allowed-remediation catalog (MVP)**: `restart-pod`, `rollback-deployment`, `scale-deployment` (within a configured min/max), and `delete-pod-to-reschedule`. Each entry has a permission scope and a fixed **Inverse Action mapping** that the Solver applies at execution time, drawing parameters from the pre-state snapshot:
 
     | Forward action | Inverse Action |
     |---|---|
-    | `restart-pod` | `None` — restart is itself the recovery; nothing to undo |
-    | `delete-pod-to-trigger-reschedule` | `None` — the parent controller recreates the pod |
-    | `scale-deployment(N)` | `scale-deployment(pre_state.replica_count)` |
-    | `rollback-deployment-to-previous-revision` | `rollback-deployment-to-revision(pre_state.revision)`, verified against `pre_state.image_tag` |
+    | `restart-pod` | `None` — restart is self-recovering; nothing to undo |
+    | `delete-pod-to-reschedule` | `None` — the parent controller recreates the pod; nothing to undo |
+    | `scale-deployment(to_replicas=N)` | `scale-deployment(to_replicas=pre_state.replica_count)` |
+    | `rollback-deployment(to_revision=N)` | `rollback-deployment(to_revision=pre_state.revision)`, verified against `pre_state.image_tag` |
 
     Adding entries is a follow-on feature governed by the constitution's "new mutating tool" checklist (kill switch, reversal, tests, budgets), and each new entry MUST declare its Inverse Action in this table.
+- **Pre-filter pattern sets**: The contextual grep pre-filter (FR-004) ships with the following initial per-domain regex pattern sets (case-insensitive, anchored to log-line text; compiled at server start; configurable via `settings.py`):
+    - **Application**: `(error|exception|traceback|stack.?trace|panic|fatal|oom|null.?pointer|segfault|exit.?code.?[^0])`
+    - **Network**: `(connection refused|connection reset|timed? ?out|no route to host|dns.*lookup fail|getaddrinfo|econnrefused|econnreset|etimedout|name.?resolution|i/o timeout)`
+    - **Database**: `(too many connections|connection pool|max_connections|deadlock|lock wait timeout|query.*timeout|could not connect to.*server|pg.*error|mysql.*error|redis.*error|connection refused.*\d{4,5})`
+
+    All three sets run during every pre-filter pass; the triggering pattern is recorded alongside each `LogExcerpt` in `FilteredEvidence` so the Router has domain-signal evidence regardless of which patterns fired.
+- **Router confidence threshold**: The `Confidence` enum has three ordered levels: `low`, `medium`, `high`. A Router output of `confidence == "low"` MUST produce `domain == "Unknown"` and bypass all Expert nodes (FR-006). Outputs of `medium` or `high` proceed to the matching Expert. This mapping is the default; tenants may not loosen it (they may tighten it to require `high` for mutation-eligible routes).
 - **Pre-filter context window**: The additive contextual pre-filter (FR-004) defaults to N=10 lines of context before/after each pattern match. Tenants may configure a different N; the platform enforces an upper bound (default 50) to keep evidence within the per-incident cost ceiling (FR-029). Overlapping windows merge into a single contiguous excerpt. If no patterns match, the pre-filter falls back to emitting the last K lines of the target's logs (default K=100) rather than empty evidence.
 - **Evidence breadth**: The Ingest node assembles `evidence` from three read-only MCP tools: `search_pod_logs` (logs), `get_pod_events` (Kubernetes events for the target, last N minutes — a new tool added by this feature), and `get_pod` (current resource status / container phase / restart counts). All three are subject to the same redaction boundary as logs. Other signals (metrics, traces, prior incidents) are out of scope for the MVP.
 - **Domain taxonomy**: `Application` / `Network` / `Database` / `Unknown`. Expanding (e.g., `Infra`, `Configuration`, `Storage`) is out of scope for the MVP.

@@ -237,6 +237,19 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 
 ---
 
+## Phase 6b: Edge-Case Coverage (Cross-cutting)
+
+**Purpose**: Close the four edge-case test gaps identified in the spec §Edge Cases that are not covered by earlier story-specific integration tests.
+
+- [ ] T108 [P] Integration test: duplicate webhook dedup path — fire the same webhook fingerprint twice within the dedup window; verify exactly one Report is delivered and the second webhook only updates `last_seen_at` (spec §Edge Cases "Duplicate webhooks", FR-003) at `tests/integration/test_duplicate_webhook.py`
+- [ ] T109 [P] Integration test: "target not found" error path — fire a webhook referencing a pod that does not exist on the fixture cluster; verify the user sees a clear "target not found" error in chat, no LLM call is made, and an audit row records the rejection (spec §Edge Cases "Webhook for a resource that no longer exists") at `tests/integration/test_target_not_found.py`
+- [ ] T110 [P] Integration test: concurrent incidents on the same target serialize — fire two incidents against the same pod with both approvals granted; verify the second Solver action only starts after the first completes and the audit trail shows non-overlapping `started_at` / `finished_at` (spec §Edge Cases "Concurrent incidents on the same target", FR-026) at `tests/integration/test_concurrent_target_serialization.py`
+- [ ] T111 [P] Integration test + fallback implementation: chat surface unavailable — kill the slack-mock service mid-incident; verify the Report is persisted in the DB incident view, the delivery-failed alert is raised, and the triage run is NOT aborted (spec §Edge Cases "Slack/chat surface is unavailable") at `tests/integration/test_slack_unavailable_fallback.py`; implement the fallback delivery path in `src/agent/graph/nodes/reporter.py` (extends T051/T084 — same file, run sequentially)
+
+**Checkpoint**: All spec §Edge Cases have integration-test coverage.
+
+---
+
 ## Phase 7: Polish & Cross-Cutting Concerns
 
 **Purpose**: Performance budget enforcement, eval threshold gating, quickstart validation, documentation.
@@ -244,10 +257,11 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 - [ ] T100 [P] Latency benchmark on recorded fixture (p50 ≤30s, p95 ≤60s, TTFT ≤3s; merge-blocking) at `tests/perf/test_latency_benchmark.py` (SC-003, Principle IX)
 - [ ] T101 [P] Cost-budget benchmark (95% of incidents stay under per-incident ceiling per SC-007) at `tests/perf/test_cost_budget.py`
 - [ ] T102 [P] Per-module coverage gate enforcement in CI (85% pure logic floor; 95% on `redaction`, `budget`, `auth`, `solver._guards`, MCP `tools/_guards`, MCP write tools) wired in `.github/workflows/ci.yml` (extends T006 — same file)
-- [ ] T103 [P] CONTRIBUTING + architecture overview at `docs/architecture.md` and `docs/CONTRIBUTING.md` (two-reviewer rule list per Principle VI / plan.md Constitution Check row VI)
+- [ ] T103 [P] CONTRIBUTING + architecture overview at `docs/architecture.md` and `docs/CONTRIBUTING.md` (two-reviewer rule list per Principle VI / plan.md Constitution Check row VI; include **contract-fixture refresh cadence**: fixtures refreshed when the upstream API contract changes or every 90 days, whichever is sooner; reviewer responsible for confirming cadence on each contract-test PR)
 - [ ] T104 [P] Document the allowed-remediation catalog and the "new mutating tool" checklist at `docs/catalog.md`
 - [ ] T105 [P] Operator runbook (kill switch, common failure modes from quickstart.md §Common failure modes) at `docs/runbook.md`
 - [ ] T106 Run `quickstart.md` end-to-end on a clean checkout; confirm `make smoke` + Approve produces a `success` follow-up and a complete audit chain in under 5 minutes of human time
+- [ ] T107 [P] Solver accuracy benchmark: labeled set at `tests/eval/solver_golden.jsonl` (fixture incidents with expected `outcome` per catalog action type) and extend `tests/eval/runner.py` to report Solver success-or-partial rate with CI gate ≥95% per SC-008; covers at least one fixture per catalog action (`restart-pod`, `rollback-deployment`, `scale-deployment`, `delete-pod-to-reschedule`)
 
 ---
 
@@ -260,7 +274,8 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 - **Phase 3 (US1)** + **Phase 4 (US2)**: depend on Phase 2. US2 reuses US1's Reporter and slack-mock, so US2 is best done immediately after US1 lands. Both together are the P1 MVP.
 - **Phase 5 (US3)**: depends on Phase 2 AND US2 (interrupt/resume + signed approval token + role check). Cannot ship before US2.
 - **Phase 6 (US4)**: depends on Phase 5 for the full audit chain to be observable end-to-end.
-- **Phase 7 (Polish)**: depends on US1+US2+US3+US4 being complete for meaningful perf/coverage/quickstart validation.
+- **Phase 6b (Edge-Case Coverage)**: depends on US1+US2+US3+US4. T111 (Slack unavailable fallback) extends reporter.py — run sequentially after T084.
+- **Phase 7 (Polish)**: depends on US1+US2+US3+US4+Phase 6b being complete for meaningful perf/coverage/quickstart validation.
 
 ### Cross-story dependencies
 
@@ -277,7 +292,7 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 ### Same-file sequencing (cannot be [P])
 
 - `src/agent/graph/builder.py`: T026 → T053 → T070 → T085
-- `src/agent/graph/nodes/reporter.py`: T051 → T084
+- `src/agent/graph/nodes/reporter.py`: T051 → T084 → T111
 - `tests/contract/test_slack_mock_protocol.py`: T040 → T066
 - `deploy/slack_mock/app.py`: T052 → T072
 - `tests/unit/test_inverse_actions.py`: T036 → T087
@@ -350,13 +365,14 @@ Once Phase 2 lands, US1, US2 can be drafted by two people in parallel against th
 
 ## Summary
 
-- **Total tasks**: 106
+- **Total tasks**: 111
 - **Setup (Phase 1)**: 11
 - **Foundational (Phase 2)**: 26 (T012-T037)
 - **US1 (Phase 3, P1)**: 28 (T038-T065)
 - **US2 (Phase 4, P1)**: 10 (T066-T075)
 - **US3 (Phase 5, P2)**: 18 (T076-T093)
 - **US4 (Phase 6, P2)**: 6 (T094-T099)
-- **Polish (Phase 7)**: 7 (T100-T106)
+- **Edge-Case Coverage (Phase 6b)**: 4 (T108-T111)
+- **Polish (Phase 7)**: 8 (T100-T107)
 - **MVP scope (US1 + US2)**: 38 tasks across phases 3 + 4 (assisted triage + HITL safety gate — no cluster mutation possible)
-- **Parallel opportunities**: 75 tasks marked [P] across all phases
+- **Parallel opportunities**: ~79 tasks marked [P] across all phases

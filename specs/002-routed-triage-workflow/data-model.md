@@ -114,7 +114,7 @@ Validation:
 
 | Field | Type | Notes |
 |---|---|---|
-| `domain` | `Domain` | Which Expert produced this (`Application` or `Network`; `Database` post-MVP). |
+| `domain` | `Domain` | Which Expert produced this (`Application`, `Network`, or `Database`). |
 | `root_cause_hypothesis` | `str` | One sentence, user-readable. |
 | `cited_evidence` | `list[LogExcerpt]` | MUST be ≥ 1. |
 | `confidence` | `Confidence` | |
@@ -132,24 +132,27 @@ Validation (Principle IV, NON-NEGOTIABLE):
 
 **Frozen** once shown in the Report (FR-016, FR-020). If anything would change post-display, the workflow MUST emit a new Report.
 
+> **Reversal display**: The reversal is **not** carried on this entity (per spec FR-011, FR-022). The Reporter derives the human-readable expected-inverse description for the chat message by looking up `action_type` in `shared/catalog.INVERSE_ACTIONS` — that lookup returns the catalog entry name and a templated description (e.g., "Undo: rollback-deployment to revision N") without concrete pre-state values, since pre-state is not yet captured at Report time. Concrete parameters are computed by the Solver at execution time from the captured `pre_state` and stored in `SolverRun.reversal_recipe`.
+
 | Field | Type | Notes |
 |---|---|---|
 | `action_type` | `ActionType` | Catalog entry. |
 | `target` | `Target` | Same `Target` as the Incident, by construction. |
-| `parameters` | `dict[str, Any]` | Action-specific (e.g., `revision` for rollback, `replicas` for scale). Schema per `action_type` lives in `shared/catalog.py`. |
-| `reversal_recipe` | `ReversalRecipe` | Pre-computed; what undoes this if the user wants to roll back. |
+| `parameters` | `dict[str, Any]` | Action-specific (e.g., `to_revision` for rollback, `to_replicas` for scale). Schema per `action_type` lives in `shared/catalog.py`. |
 | `permission_scope` | `str` | Identifier of the ServiceAccount the MCP write tool will use. |
 | `fingerprint` | `str` | SHA-256 over the canonical JSON of `(action_type, target, parameters)`. Used by the Solver to verify nothing changed between approval and execution (FR-020). |
 
 ### 9. ReversalRecipe
 
+> **Terminology note**: spec.md and plan.md use the human-language term **"Inverse Action"** for the concept this entity represents. `ReversalRecipe` is the Python/pydantic class name. Constitution.md Principle V uses "reversal recipe." These three terms are synonymous; `ReversalRecipe` is canonical in code.
+
 Frozen.
 
 | Field | Type | Notes |
 |---|---|---|
-| `description` | `str` | Human-readable: "Re-scale to 3 replicas" / "Rollback to revision 7." |
-| `inverse_action` | `ActionType \| Literal["manual"]` | The action that undoes this one, if any. `"manual"` means there is no clean automated inverse (rare; admin must intervene). |
-| `inverse_parameters` | `dict[str, Any]` | Parameters for `inverse_action` if applicable. |
+| `description` | `str` | Human-readable: "Re-scale to 3 replicas" / "Rollback to revision 7." / "No automated undo — restart was self-recovering." |
+| `inverse_action` | `ActionType \| Literal["manual"] \| None` | The action that undoes this one. `None` means the action is transient/self-recovering (e.g., `restart-pod`, `delete-pod-to-reschedule`) and nothing needs to be undone. `"manual"` means there is no clean automated inverse and an admin must intervene (rare; should not appear in the MVP catalog). |
+| `inverse_parameters` | `dict[str, Any]` | Parameters for `inverse_action` when it is a catalog entry. Empty dict when `inverse_action` is `None` or `"manual"`. |
 
 ### 10. Report
 
@@ -208,7 +211,7 @@ Per FR-016: approved/executed/failed/etc. are scoped to **this** Report's `corre
 | `action_issued` | `dict` | Canonical JSON of the action sent to MCP. |
 | `post_state` | `dict` | Snapshot after the verification window. |
 | `outcome` | `SolverOutcome` | |
-| `reversal_recipe` | `ReversalRecipe` | Echoes `ProposedFix.reversal_recipe`. |
+| `reversal_recipe` | `ReversalRecipe` | The Inverse Action computed at execution time from `pre_state` via the fixed catalog mapping. `inverse_action=None` for transient actions (restart-pod, delete-pod-to-reschedule). |
 | `error` | `str \| None` | Populated on `outcome == "failure"`. |
 | `started_at` | `datetime` | |
 | `finished_at` | `datetime` | |
@@ -256,10 +259,10 @@ Defined in `src/shared/catalog.py` and validated server-side in the MCP write to
 
 | `action_type` | Parameters | Reversal |
 |---|---|---|
-| `restart-pod` | `{}` (target identifies the pod) | `inverse_action="manual"` — restart is generally self-reversing; pre-state container UIDs recorded so a stuck restart can be inspected. |
+| `restart-pod` | `{}` (target identifies the pod) | `inverse_action=None` — restart is self-recovering; nothing to undo. Pre-state `restart_count` recorded for post-verification. |
 | `rollback-deployment` | `{ "to_revision": int }` | `inverse_action="rollback-deployment"`, `inverse_parameters={"to_revision": <pre_state.current_revision>}` |
 | `scale-deployment` | `{ "to_replicas": int }`; constrained to `[min, max]` from tenant config | `inverse_action="scale-deployment"`, `inverse_parameters={"to_replicas": <pre_state.replicas>}` |
-| `delete-pod-to-reschedule` | `{}` (admission/PDB-respecting; never `--force`, never `--grace-period=0`) | `inverse_action="manual"` — the controller-driven reschedule produces a new pod; reversal is "investigate the new pod" |
+| `delete-pod-to-reschedule` | `{}` (admission/PDB-respecting; never `--force`, never `--grace-period=0`) | `inverse_action=None` — the parent controller recreates the pod; nothing to undo. |
 
 ---
 

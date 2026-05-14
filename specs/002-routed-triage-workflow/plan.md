@@ -63,6 +63,8 @@ Plus, in dev only: a mock-Slack FastAPI receiver and a `kind` cluster.
 - Zero unredacted secrets reach the LLM or the audit record (SC-009).
 - All MCP write tools are individually scoped per action type and per namespace; no broad cluster-admin token.
 - All retries are bounded with jitter; no unbounded loops.
+- **Memory budget**: agent service process ≤ 512 MiB RSS; MCP server process ≤ 256 MiB RSS. Exceeding these in CI or production is a defect (Principle IX).
+- **Concurrency budget**: up to 10 in-flight incidents simultaneously; per-target remediation serialized via `solver_lock.py` (FR-026). Unbounded fan-out is a defect.
 
 **Scale/Scope**:
 
@@ -117,6 +119,7 @@ src/
 │   ├── api/
 │   │   ├── webhook.py                 # POST /webhook/alertmanager (HMAC-verified)
 │   │   ├── callbacks.py               # POST /callbacks/slack/approve|reject
+│   │   ├── expiry.py                  # Background task: PENDING → EXPIRED at approval_deadline
 │   │   └── health.py
 │   ├── graph/
 │   │   ├── builder.py                 # build_graph() — assembles nodes + conditional edges + interrupt
@@ -137,18 +140,24 @@ src/
 │   ├── budget.py                      # Per-incident token/$ ceiling enforcement (fail-closed)
 │   ├── audit.py                       # Append-only audit writes keyed by correlation_id
 │   ├── auth.py                        # Approver role check (95% coverage tier)
+│   ├── approval_token.py              # Short-lived signed token carrying proposed_fix_fingerprint + correlation_id + exp
+│   ├── kill_switch.py                 # Agent-side kill-switch cache + check helper
+│   ├── logging_config.py              # structlog configuration bound to correlation contextvar
+│   ├── solver_lock.py                 # Per-target serialization lock (FR-026)
+│   ├── telemetry.py                   # OpenTelemetry tracer + node-entry/exit + MCP-call span helpers
 │   └── settings.py                    # Pydantic Settings (env-driven)
 │
 ├── mcp_server/                        # Separate process: in-repo MCP server
 │   ├── server.py                      # MCP server entrypoint (stdio dev / HTTP-SSE prod)
+│   ├── admin.py                       # POST /admin/kill-switch (IP-restricted, ≤5s propagation)
 │   ├── tools/
 │   │   ├── search_pod_logs.py         # READ — fetch + local contextual grep pre-filter
 │   │   ├── get_pod_events.py          # READ — Kubernetes events for the target (last N minutes)
 │   │   ├── get_pod.py                 # READ — pod status / phase / restart count
 │   │   ├── restart_pod.py             # WRITE — catalog: restart-pod
-│   │   ├── rollback_deployment.py     # WRITE — catalog: rollback-deployment-to-previous-revision
+│   │   ├── rollback_deployment.py     # WRITE — catalog: rollback-deployment
 │   │   ├── scale_deployment.py        # WRITE — catalog: scale-deployment (bounded min/max enforced server-side)
-│   │   ├── delete_pod_to_reschedule.py # WRITE — catalog: delete-pod-to-trigger-reschedule; never with --force
+│   │   ├── delete_pod_to_reschedule.py # WRITE — catalog: delete-pod-to-reschedule; never with --force
 │   │   └── _guards.py                 # admission / PDB / quota refusal handling, no --force ever
 │   └── auth.py                        # Per-tool ServiceAccount loading + scope check
 │
@@ -176,8 +185,12 @@ tests/
 │   ├── application_expert_golden.jsonl
 │   ├── network_expert_golden.jsonl
 │   ├── database_expert_golden.jsonl
+│   ├── solver_golden.jsonl            # labeled remediation scenarios for SC-008 benchmark
 │   ├── hallucination_suite.py         # every claim must cite an excerpt present in the input
 │   └── runner.py
+├── perf/
+│   ├── test_latency_benchmark.py      # p50 ≤30s, p95 ≤60s, TTFT ≤3s (SC-003)
+│   └── test_cost_budget.py            # 95% of incidents under per-incident ceiling (SC-007)
 └── unit/
     ├── test_redaction.py
     ├── test_budget.py
