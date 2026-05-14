@@ -6,11 +6,12 @@ POST /webhook/alertmanager — Alert Intake.
 Per contracts/alertmanager_webhook.md:
   1. HMAC verify raw body (X-Alertmanager-Signature). Fail → 401, audit.
   2. Parse Alertmanager v4 subset. Fail → 400/422.
-  3. Dedup fingerprint = sha256(groupKey|namespace|pod|floor(startsAt/600)).
+  3. Dedup fingerprint = sha256(groupKey|namespace|pod|floor(startsAt/window)).
      Existing within window ⇒ update last_seen_at, return 202 deduped.
   4. New ⇒ insert incidents row, audit webhook_received, kick off graph
      run as a background asyncio task, return 202.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -65,7 +66,7 @@ def _verify_signature(body: bytes, signature: Optional[str]) -> bool:
 
 
 def _dedup_fingerprint(group_key: str, namespace: str, pod: str, starts_at: datetime) -> str:
-    bucket = math.floor(starts_at.timestamp() / 600)  # 10-min bucket
+    bucket = math.floor(starts_at.timestamp() / settings.dedup_window_seconds)
     raw = f"{group_key}|{namespace}|{pod}|{bucket}".encode()
     return hashlib.sha256(raw).hexdigest()
 

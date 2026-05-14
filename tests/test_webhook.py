@@ -1,13 +1,16 @@
 """tests/test_webhook.py — POST /webhook/alertmanager scenarios."""
+
 from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
 from src.agent.audit import fetch_chain
 from src.agent.db import get_conn
+from src.agent.settings import settings
 from tests.conftest import fire_webhook
 
 
@@ -66,9 +69,7 @@ async def test_webhook_missing_signature_header(
     assert r.status_code == 401
 
 
-async def test_webhook_malformed_body(
-    client: httpx.AsyncClient, sign_alertmanager
-) -> None:
+async def test_webhook_malformed_body(client: httpx.AsyncClient, sign_alertmanager) -> None:
     body = b'{"not": "valid alertmanager"}'
     r = await client.post(
         "/webhook/alertmanager",
@@ -114,6 +115,29 @@ async def test_webhook_dedup_returns_same_correlation_id(
     # An incident_deduped audit row exists for the same correlation_id.
     chain = await fetch_chain(cid1)
     assert any(r["stage"] == "incident_deduped" for r in chain)
+
+
+async def test_webhook_dedup_window_uses_runtime_setting(
+    client: httpx.AsyncClient, alertmanager_payload, sign_alertmanager
+) -> None:
+    previous_window = settings.dedup_window_seconds
+    settings.dedup_window_seconds = 60
+    try:
+        start = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+        r1 = await fire_webhook(client, alertmanager_payload(starts_at=start), sign_alertmanager)
+        assert r1.status_code == 202
+        cid1 = r1.json()["correlation_id"]
+        assert r1.json()["deduplicated"] is False
+
+        r2 = await fire_webhook(
+            client, alertmanager_payload(starts_at=start + timedelta(seconds=61)), sign_alertmanager
+        )
+        assert r2.status_code == 202
+        body2 = r2.json()
+        assert body2["deduplicated"] is False
+        assert body2["correlation_id"] != cid1
+    finally:
+        settings.dedup_window_seconds = previous_window
 
 
 async def test_webhook_resolved_short_circuits(
