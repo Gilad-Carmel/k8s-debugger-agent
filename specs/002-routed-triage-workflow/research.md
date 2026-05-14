@@ -49,8 +49,8 @@ This document captures the technology decisions made during Phase 0. There are *
 - **Decision**: Use the official `mcp` Python SDK to expose tools as an MCP server. Run it as its own process, separate from the agent. Transport: stdio in dev (simplest), HTTP/SSE in production (so the agent can reach it across pods).
 - **Rationale**: Physical process separation is the cleanest enforcement boundary for Principle I — the agent literally cannot mutate the cluster without going through MCP. Per-tool ServiceAccounts live in the MCP process; the agent process never holds a write-capable kube token.
 - **Tool catalog** (mirrors spec FR-011 and assumption catalog):
-  - **Read**: `search_pod_logs` (window, grep pattern, max lines), `get_pod` (status, restart count, container states).
-  - **Write**: `restart_pod`, `rollback_deployment`, `scale_deployment` (with min/max bounds enforced server-side), `delete_pod` (used only as a reschedule trigger; admission/PDB-respecting, never `--force`).
+  - **Read**: `search_pod_logs` (window, grep pattern, max lines, contextual N-line window around each match per FR-004), `get_pod_events` (Kubernetes events for the target, last N minutes — required by `spec.md` §Assumptions and by the `evidence.events` field on `WorkflowState`), `get_pod` (status, restart count, container states).
+  - **Write**: `restart_pod`, `rollback_deployment`, `scale_deployment` (with min/max bounds enforced server-side), `delete_pod_to_reschedule` (used only as a reschedule trigger; admission/PDB-respecting, never `--force`). Each write tool has a fixed Forward → Inverse Action mapping registered in `shared/catalog.py` per `spec.md` §Assumptions.
 - **Alternatives considered**:
   - Have the agent call `kubernetes` directly — rejected: it collapses Principle I's safety boundary into the LLM-adjacent process.
   - Use a generic K8s MCP server — rejected: third-party tools expose broader surface than we want for the MVP catalog. We can revisit once the catalog stabilizes.
@@ -92,7 +92,7 @@ This document captures the technology decisions made during Phase 0. There are *
   - CI gates (per constitution VII + IX):
     - `ruff` + `black --check` + `mypy --strict` MUST pass.
     - Coverage ≥ 85% pure logic, ≥ 95% safety-critical (`redaction`, `budget`, `auth`, `solver._guards`, MCP `tools/_guards`, MCP write tools).
-    - Eval suite: Router top-1 ≥ 85%, top-2 ≥ 97% on the labeled fixture; Expert proposed-fix match ≥ 70%.
+    - Eval suite: Router top-1 ≥ 85%, top-2 ≥ 97% on the labeled fixture; Expert proposed-fix match ≥ 70% per domain (Application, Network, Database — reported separately per SC-002).
     - Hallucination suite: zero failures.
     - Latency benchmark on a recorded fixture: p50 ≤ 30 s, p95 ≤ 60 s; regression beyond budget blocks merge.
     - Redaction audit job: zero unredacted secrets in fixture audit table.
@@ -107,6 +107,30 @@ This document captures the technology decisions made during Phase 0. There are *
 
 - **Decision**: Fingerprint = `sha256(alert_id || target_namespace || target_pod || floor(timestamp / 600s))`. First webhook in the bucket creates the Incident; subsequent webhooks update its `last_seen` but do not re-trigger the graph.
 - **Rationale**: Matches the spec's 10-min dedup assumption with a deterministic, replayable function. Bucketing on a 10-min floor is coarser than a sliding window but is dramatically simpler and adequate for the MVP's incident volume.
+
+## R13. Dependency vetting (Principle VI)
+
+Each new runtime dependency below was evaluated for (a) OSI-approved license, (b) active maintenance (commit in the last 90 days or stable LTS posture), (c) no open critical CVEs as of the date of this document, and (d) supply-chain posture (signed releases or a maintained PyPI account with 2FA).
+
+| Package | License | Maintenance | Notes |
+|---|---|---|---|
+| `langgraph` | MIT | Active (LangChain org) | Pin to ≥ 0.2; checkpointer adapters tracked on the same release cadence. |
+| `langchain-core` | MIT | Active | Used only for structured-output / model-binding helpers transitive to LangGraph. |
+| `mcp` (official Python SDK) | MIT | Active (Anthropic) | Project preference per `CLAUDE.md` is the official SDK. |
+| `kubernetes` (official client) | Apache-2.0 | Active (CNCF) | Used inside MCP tools only; never imported from the agent process. |
+| `fastapi` | MIT | Active | Mainstream async HTTP framework; pulled in transitively by much of the LLM stack. |
+| `uvicorn` | BSD-3-Clause | Active | Standard FastAPI runner. |
+| `pydantic` v2 | MIT | Active | Required for structured-output / Settings. |
+| `anthropic` | MIT | Active (Anthropic) | Primary LLM provider per R2. |
+| `sqlalchemy` 2.x | MIT | Active | Used for the audit table and as the substrate for both checkpointer back-ends. |
+| `asyncpg` | Apache-2.0 | Active | Postgres driver (prod). |
+| `aiosqlite` | MIT | Active | SQLite driver (dev/CI). |
+| `structlog` | Apache-2.0 / MIT | Active | Structured logging with contextvars. |
+| `opentelemetry-api` / `opentelemetry-sdk` | Apache-2.0 | Active (CNCF) | Spans on node entry/exit + MCP tool calls per Principle IX. |
+| `respx` (test only) | BSD-3-Clause | Active | HTTPX mock for contract tests. |
+| `deepeval` (test only) | Apache-2.0 | Active | LLM eval runner; thin in-house equivalent acceptable if `deepeval`'s API changes. |
+
+Two-reviewer rule (Principle VI / Governance) applies to any PR that adds, removes, or version-bumps a package in the `anthropic`, `langgraph`, `langchain-core`, or `mcp` lines (per "model dependencies").
 
 ---
 
@@ -126,5 +150,6 @@ This document captures the technology decisions made during Phase 0. There are *
 | CI gates | R10 (per constitution VII + IX) |
 | Approver role | R11 (single `triage-approver` role for MVP) |
 | Dedup | R12 (10-min bucketed fingerprint) |
+| Dependency vetting | R13 (license, maintenance, supply-chain posture per Principle VI) |
 
 No `NEEDS CLARIFICATION` items remain. Phase 1 may proceed.

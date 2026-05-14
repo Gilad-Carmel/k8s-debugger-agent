@@ -6,7 +6,7 @@
 
 ## Summary
 
-Build a LangGraph state-machine workflow that (a) receives an Alertmanager-style webhook, (b) fetches and pre-filters logs via an in-repo MCP server, (c) classifies the incident domain with a structured-output LLM call, (d) dispatches to a domain-specific Expert agent for diagnosis + proposed fix, (e) renders a chat report with interactive Approve/Reject controls to a mock-Slack receiver, (f) `interrupt`s the graph until an authorized approval click, then (g) resumes into a Solver node that executes the exact approved action through tightly-scoped MCP write tools and reports the outcome with a reversal recipe. Persistence is Postgres (LangGraph checkpointer + append-only audit table) in production and SQLite for local/CI runs.
+Build a LangGraph state-machine workflow that (a) receives an Alertmanager-style webhook, (b) fetches and pre-filters logs, Kubernetes events, and resource status via an in-repo MCP server, (c) classifies the incident domain (`Application` / `Network` / `Database` / `Unknown`) with a structured-output LLM call, (d) dispatches to a domain-specific Expert agent for diagnosis + proposed fix, (e) renders a chat report with interactive Approve/Reject controls to a mock-Slack receiver, (f) `interrupt`s the graph until an authorized approval click, then (g) resumes into a deterministic (no-LLM) Solver node that executes the exact approved action through tightly-scoped MCP write tools, captures a pre-state snapshot, verifies the post-state, and reports the outcome with the **Inverse Action** computed at execution time from the pre-state (per the fixed Forward → Inverse mapping in the allowed-remediation catalog). Persistence is Postgres (LangGraph checkpointer + append-only audit table) in production and SQLite for local/CI runs.
 
 ## Technical Context
 
@@ -23,6 +23,7 @@ Build a LangGraph state-machine workflow that (a) receives an Alertmanager-style
 - `anthropic` (primary) — Haiku-class for Router/Reporter, Sonnet-class for Experts. Model IDs configurable.
 - `sqlalchemy` + `asyncpg` (prod) / `aiosqlite` (dev) — audit table and checkpoint storage
 - `structlog` — correlation-ID-bound structured logging
+- `opentelemetry-api` + `opentelemetry-sdk` — node-entry/exit and MCP-call span instrumentation for the IX perf budget
 - Test: `pytest`, `pytest-asyncio`, `respx` (HTTP mocks), `kind` (real cluster fixture in CI), `deepeval` (LLM evals)
 
 **Storage**:
@@ -50,10 +51,10 @@ Plus, in dev only: a mock-Slack FastAPI receiver and a `kind` cluster.
 
 **Performance Goals** (from spec SC-003 and constitution IX):
 
-- TTFT (first chat message rendered to the user) ≤ 3 s.
-- p50 end-to-end (webhook → report delivered) ≤ 30 s.
+- TTFT (first user-visible acknowledgement in chat — an interim "Triage started — correlation `<id>`" message emitted at the end of the Ingest node, before any LLM call) ≤ 3 s.
+- p50 end-to-end (webhook → final Report with proposed fix + Approve/Reject controls delivered) ≤ 30 s.
 - p95 end-to-end ≤ 60 s.
-- Solver run + verification ≤ 60 s (default verification window from spec assumptions).
+- Solver execution (API call) ≤ 10 s; post-state verification window ≤ 60 s per spec assumption (verification is bounded independently of the forward call).
 
 **Constraints**:
 
@@ -76,13 +77,13 @@ Evaluated against `.specify/memory/constitution.md` v1.1.0 (Principles I–IX).
 
 | # | Principle | Status | Notes |
 |---|---|---|---|
-| I | Safety-First Autonomy | ✅ Compliant | Read-only by default (MCP read tools). Mutations gated on HITL approval via LangGraph `interrupt` (spec FR-015). Catalog-only writes (FR-011 / FR-021). Reversal recipe captured pre-flight and stored (FR-022). Per-target serialization (FR-026). Kill switch within 5 s (FR-030). No `--force` / `--grace-period=0` bypass. |
+| I | Safety-First Autonomy | ✅ Compliant | Read-only by default (MCP read tools). Mutations gated on HITL approval via LangGraph `interrupt` (spec FR-015). Catalog-only writes (FR-011 / FR-021). Pre-state snapshot captured immediately before every forward action; the **Inverse Action** is *computed* by the Solver at execution time from that snapshot using the fixed Forward → Inverse mapping in the catalog (FR-022, never an Expert-authored ad-hoc script). Per-target serialization (FR-026). Kill switch within 5 s (FR-030). No `--force` / `--grace-period=0` bypass. |
 | II | Cost-Conscious by Design | ✅ Compliant | Tiered model selection: Router on Haiku-class, Experts on Sonnet-class, Reporter on Haiku-class. Per-incident token + cost ceiling (FR-029). Cached/summarized state passes between nodes via LangGraph state (not re-prompted). Cost is recorded per-stage in audit. |
 | III | Developer Experience as a Product | ✅ Compliant | Single Slack-style chat message with TL;DR + cited evidence + interactive controls (FR-013/FR-014). Latency SLOs from constitution IX adopted directly (see Performance Goals). One-command local setup via `docker-compose up` (quickstart.md). |
 | IV | Evidence-Backed Triage (NON-NEGOTIABLE) | ✅ Compliant | Router cites (FR-007), Experts cite (FR-010), 100% of user-facing claims cited (SC-005). Hallucination tests run in CI. |
-| V | Observability & Reversibility | ✅ Compliant | Single `correlation_id` joins every stage (FR-028). Audit table records prompt, response, model, tokens, cost, redactions, pre/action/post-state, and reversal recipe (FR-022). LangGraph checkpoints provide an additional crash-recovery audit surface. |
-| VI | Code Quality | ✅ Compliant | `ruff` + `black` + `mypy --strict` in CI. Cyclomatic complexity cap (15) enforced via `ruff` `C901`. Dependency vetting captured in research.md. Two-reviewer rule applies to PRs touching MCP write tools, redaction, budget enforcement, and authorization. |
-| VII | Testing Standards (NON-NEGOTIABLE) | ✅ Compliant | Coverage floors 85% / 95% enforced in CI per safety-critical module list (redaction, budget, approval, solver-guard, MCP-write). LLM eval suite for Router and per-Expert. Hallucination test on every Expert response. Refusal-path + reversal-recipe tests for every MCP write tool. |
+| V | Observability & Reversibility | ✅ Compliant | Single `correlation_id` joins every stage (FR-028). Audit table records prompt, response, model, tokens, cost, redactions, pre/action/post-state, and the **Inverse Action** computed at Solver execution time (FR-022, FR-023). LangGraph checkpoints provide an additional crash-recovery audit surface. |
+| VI | Code Quality | ✅ Compliant | `ruff` + `black` + `mypy --strict` in CI. Cyclomatic complexity cap (15) enforced via `ruff` `C901`. Dependency vetting captured in `research.md` §R13. Two-reviewer rule applies to PRs touching MCP write tools, redaction, budget enforcement, authorization (`auth.py` + role-check), **model selection / provider dependencies (`llm.py`, `settings.py:LLM_*`)**, and this plan. |
+| VII | Testing Standards (NON-NEGOTIABLE) | ✅ Compliant | Coverage floors 85% / 95% enforced in CI per safety-critical module list (`redaction`, `budget`, `approval`, `auth`, `solver._guards`, MCP `tools/_guards`, MCP write tools). LLM eval suite for Router and per-Expert (all three: Application, Network, Database). Hallucination test on every Expert response. Refusal-path + Inverse-Action-recipe tests for every MCP write tool. |
 | VIII | User Experience Consistency | ✅ Compliant | One pydantic `Report` model produced by the Reporter node; rendered for Slack-mock today, web/CLI later. Shared label vocabulary (`Application` / `Network` / `Database` / `Unknown`). Single error-message template. Timestamps ISO-8601; bytes IEC. |
 | IX | Performance Requirements (DevOps SLOs) | ✅ Compliant | TTFT/p50/p95/cost SLOs declared above and CI-enforced on the benchmark. Bounded jittered retries on K8s + LLM calls. Hot paths (LangGraph node entry/exit, MCP tool calls) profiled via `opentelemetry`. Freshness SLO N/A (MVP refetches every incident). |
 
@@ -121,48 +122,52 @@ src/
 │   │   ├── builder.py                 # build_graph() — assembles nodes + conditional edges + interrupt
 │   │   ├── state.py                   # WorkflowState (TypedDict)
 │   │   └── nodes/
-│   │       ├── ingest.py              # Node 1: dedup + MCP search_pod_logs
-│   │       ├── router.py              # Node 2: structured-output classifier
+│   │       ├── ingest.py              # Node 1: dedup + emit TTFT ack + MCP search_pod_logs + get_pod_events + get_pod
+│   │       ├── router.py              # Node 2: structured-output classifier (App / Net / DB / Unknown)
 │   │       ├── experts/
 │   │       │   ├── application.py     # Node 3a
 │   │       │   ├── network.py         # Node 3b
+│   │       │   ├── database.py        # Node 3c
 │   │       │   └── _base.py           # shared expert protocol
 │   │       ├── reporter.py            # Node 4: assemble Report + send to slack-mock
-│   │       └── solver.py              # Node 5 (post-interrupt): execute via MCP write tools
+│   │       └── solver.py              # Node 5 (post-interrupt): NO LLM — deterministic execution of the frozen ProposedFix via MCP write tools; computes Inverse Action from captured pre-state
 │   ├── mcp_client.py                  # Thin wrapper around the MCP Python SDK
 │   ├── llm.py                         # Tiered model selection + structured output helpers
 │   ├── redaction.py                   # Secret-shaped pattern redaction (applied at tool boundary + pre-LLM)
 │   ├── budget.py                      # Per-incident token/$ ceiling enforcement (fail-closed)
 │   ├── audit.py                       # Append-only audit writes keyed by correlation_id
-│   ├── auth.py                        # Approver role check
+│   ├── auth.py                        # Approver role check (95% coverage tier)
 │   └── settings.py                    # Pydantic Settings (env-driven)
 │
 ├── mcp_server/                        # Separate process: in-repo MCP server
 │   ├── server.py                      # MCP server entrypoint (stdio dev / HTTP-SSE prod)
 │   ├── tools/
-│   │   ├── search_pod_logs.py         # READ — fetch + local grep pre-filter
+│   │   ├── search_pod_logs.py         # READ — fetch + local contextual grep pre-filter
+│   │   ├── get_pod_events.py          # READ — Kubernetes events for the target (last N minutes)
 │   │   ├── get_pod.py                 # READ — pod status / phase / restart count
-│   │   ├── restart_pod.py             # WRITE — scoped to namespace via per-tool SA
-│   │   ├── rollback_deployment.py     # WRITE — rollout undo
-│   │   ├── scale_deployment.py        # WRITE — bounded scale range
-│   │   ├── delete_pod.py              # WRITE — used as "reschedule" trigger; never with --force
+│   │   ├── restart_pod.py             # WRITE — catalog: restart-pod
+│   │   ├── rollback_deployment.py     # WRITE — catalog: rollback-deployment-to-previous-revision
+│   │   ├── scale_deployment.py        # WRITE — catalog: scale-deployment (bounded min/max enforced server-side)
+│   │   ├── delete_pod_to_reschedule.py # WRITE — catalog: delete-pod-to-trigger-reschedule; never with --force
 │   │   └── _guards.py                 # admission / PDB / quota refusal handling, no --force ever
 │   └── auth.py                        # Per-tool ServiceAccount loading + scope check
 │
 └── shared/                            # Cross-package contracts and catalogs
     ├── schemas.py                     # Report, RoutingDecision, ExpertDiagnosis, ProposedFix, ApprovalEvent, SolverRun
-    ├── catalog.py                     # Allowed-remediation catalog (ID → action signature + reversal recipe template)
-    ├── labels.py                      # Single source of truth for domain / severity / outcome strings
+    ├── catalog.py                     # Allowed-remediation catalog (action ID → signature) + INVERSE_ACTIONS (fixed Forward → Inverse mapping per spec.md §Assumptions)
+    ├── labels.py                      # Single source of truth for domain (App/Net/DB/Unknown) / severity / outcome strings
+    ├── errors.py                      # Single user-facing error-message template (what failed / why / what to try next) per Principle VIII
     └── correlation.py                 # correlation_id generation + contextvar propagation
 
 tests/
 ├── contract/
 │   ├── test_alertmanager_payload.py
-│   ├── test_mcp_tools.py              # both read and write tool contracts
+│   ├── test_mcp_tools.py              # both read and write tool contracts (incl. get_pod_events)
 │   └── test_slack_mock_protocol.py
 ├── integration/
 │   ├── test_e2e_application_flow.py   # webhook → report → approve → solver → success
 │   ├── test_e2e_network_flow.py
+│   ├── test_e2e_database_flow.py
 │   ├── test_e2e_unknown_low_confidence.py
 │   ├── test_hitl_gating.py            # no mutation without approval; expiry; role-check
 │   └── test_kill_switch.py
@@ -170,12 +175,15 @@ tests/
 │   ├── router_golden.jsonl            # labeled router classification fixtures
 │   ├── application_expert_golden.jsonl
 │   ├── network_expert_golden.jsonl
+│   ├── database_expert_golden.jsonl
 │   ├── hallucination_suite.py         # every claim must cite an excerpt present in the input
 │   └── runner.py
 └── unit/
     ├── test_redaction.py
     ├── test_budget.py
-    ├── test_solver_guards.py          # refusal-path + reversal-recipe tests
+    ├── test_auth.py                   # role-check positive + negative paths (95% coverage tier)
+    ├── test_solver_guards.py          # refusal-path + Inverse-Action computation tests
+    ├── test_inverse_actions.py        # Forward → Inverse mapping table (catalog.py)
     ├── test_audit_record.py
     └── test_graph_state_transitions.py
 
@@ -183,6 +191,9 @@ deploy/
 ├── docker-compose.yml                 # agent + mcp + postgres + slack-mock + kind (dev)
 ├── Dockerfile.agent
 ├── Dockerfile.mcp
+├── slack_mock/
+│   ├── app.py                         # tiny FastAPI receiver: POST /messages, POST /messages/{id}/approve|reject
+│   └── Dockerfile
 └── k8s/
     ├── agent-deployment.yaml
     └── mcp-deployment.yaml
@@ -191,7 +202,7 @@ docs/
 └── (created by /speckit-tasks polish phase if needed)
 ```
 
-**Structure Decision**: Python monorepo with two installable packages — `src/agent` (the FastAPI + LangGraph service) and `src/mcp_server` (the MCP tool server) — sharing `src/shared` for the cross-package contracts (Report schema, catalog, label vocabulary). This is closest to the "web application" option in the template (backend + a second runtime), but no frontend; the mock-Slack is a tiny FastAPI receiver living inside `deploy/` rather than its own package. Two packages instead of one keeps the write-tools (and their per-tool ServiceAccounts) physically separated from the agent process, which directly supports Principles I and V — the agent cannot mutate a cluster without going through the MCP boundary.
+**Structure Decision**: Python monorepo with two installable packages — `src/agent` (the FastAPI + LangGraph service) and `src/mcp_server` (the MCP tool server) — sharing `src/shared` for the cross-package contracts (Report schema, allowed-remediation catalog + Inverse Action mapping, domain/severity/outcome label vocabulary, user-facing error template). The MVP supports three domain Experts (Application, Network, Database) matching the spec's four-way taxonomy (the fourth, `Unknown`, short-circuits past the Experts). The Ingest node draws evidence from three MCP read tools (`search_pod_logs`, `get_pod_events`, `get_pod`) and emits a TTFT acknowledgement to chat before any LLM call. The mock-Slack receiver is a tiny FastAPI service under `deploy/slack_mock/` rather than its own installable package. Two packages instead of one keeps the write-tools (and their per-tool ServiceAccounts) physically separated from the agent process, which directly supports Principles I and V — the agent cannot mutate a cluster without going through the MCP boundary.
 
 ## Complexity Tracking
 
