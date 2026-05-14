@@ -5,7 +5,7 @@
 # Routed triage workflow targets  (feature 002 / quickstart.md)
 # ---------------------------------------------------------------------------
 
-## dev — bring up the full local stack (agent + mcp-server + slack-mock + kind)
+## dev — bring up the local stack (agent + slack-mock)
 dev:
 	docker compose -f deploy/docker-compose.yml up --build
 
@@ -46,10 +46,9 @@ smoke:
 	@test -f tests/fixtures/fire_webhook.py || { echo "T055 not yet implemented; run after T055."; exit 1; }
 	uv run python tests/fixtures/fire_webhook.py $(if $(INCIDENT),--incident $(INCIDENT),)
 
-## clean — tear down the compose stack and delete the kind cluster
+## clean — tear down the compose stack
 clean:
 	docker compose -f deploy/docker-compose.yml down -v --remove-orphans || true
-	kind delete cluster --name k8s-debugger 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Demo targets — podinfo failure scenario runner (feature 003)

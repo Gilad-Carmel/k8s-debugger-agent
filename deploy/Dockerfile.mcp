@@ -2,47 +2,30 @@
 #
 # MCP server: separate process exposing Kubernetes read + scoped-write tools.
 #
-# Physically separate from the agent so the agent process never holds a
-# write-capable kube token (research.md R5, Principle I).
+# NOTE: src/mcp_server/server.py currently only implements the stdio MCP
+# transport (HTTP/SSE is a TODO). This image still builds and can be used
+# by anything that spawns it as a subprocess and talks over stdin/stdout.
+# The compose stack does NOT run this as a long-lived HTTP service yet --
+# it will be re-enabled once http transport lands.
 #
-# Memory budget: ≤ 256 MiB RSS (plan.md §Constraints, Principle IX)
-# Exposed port  : 8081 (HTTP/SSE transport in prod; stdio in dev)
+# Memory budget: <= 256 MiB RSS (plan.md Constraints, Principle IX)
 # Entry point   : python -m src.mcp_server  (src/mcp_server/__main__.py)
-#
-# Build from repo root:
-#   docker build -f deploy/Dockerfile.mcp -t k8s-debugger-mcp .
 
-FROM python:3.11-slim AS base
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# ---- dependency layer --------------------------------------------------------
-COPY pyproject.toml .
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    MCP_SA_TOKEN_DIR=/run/secrets/mcp-sa \
+    MCP_TRANSPORT=stdio
+
 RUN pip install --no-cache-dir uv==0.6.14
 
-# Install runtime deps only.
-RUN uv pip install --system --no-cache .
-
-# ---- source layer ------------------------------------------------------------
+# hatchling needs the src/ tree present to build the wheel.
+COPY pyproject.toml ./
 COPY src/ src/
 
-# ---- runtime image -----------------------------------------------------------
-FROM base AS runtime
-
-# Non-root user per Principle I (least privilege).
-RUN useradd --no-create-home --shell /bin/false mcp
-USER mcp
-
-# Per-tool Kubernetes ServiceAccount tokens are mounted here by the compose
-# stack (or by the k8s pod spec in production).
-# The MCP server loads them at startup via src/mcp_server/auth.py.
-ENV MCP_SA_TOKEN_DIR=/run/secrets/mcp-sa \
-    MCP_TRANSPORT=http \
-    MCP_HOST=0.0.0.0 \
-    MCP_PORT=8081 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
-
-EXPOSE 8081
+RUN uv pip install --system --no-cache .
 
 CMD ["python", "-m", "src.mcp_server"]

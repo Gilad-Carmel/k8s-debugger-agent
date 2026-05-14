@@ -1,135 +1,24 @@
 # deploy/docker-compose.yml
 #
-# Local development stack for the Routed Triage and Auto-Remediation Workflow.
+# Minimal local stack: agent + slack-mock.
 #
-# Services (quickstart.md §One-command setup):
-#   mcp-server    — MCP tool server: read + scoped-write tools (port 8081)
-#   agent         — FastAPI + LangGraph workflow runner (port 8080)
-#   slack-mock    — Tiny mock Slack receiver + interactive callbacks (port 8090)
-#   kind-init     — Init container: creates kind cluster, applies fixtures,
-#                   mounts SA tokens into mcp-server.
+# Intentionally NO kind cluster and NO mcp-server here:
+#   - The host has a wrapping `docker run` that injects --user=<uid:gid>, so
+#     spinning up kind from a sidecar container is fragile in this env.
+#   - src/mcp_server only implements stdio transport today; there's no HTTP
+#     server to host.
 #
-# Persistence: SQLite (agent.sqlite3 on the sqlite_data named volume).
-# Schema is bootstrapped automatically by src/agent/db.py at startup.
+# What works:
+#   - `agent` boots, exposes /health on :8080 (FastAPI factory: src.agent.api:create_app)
+#   - `slack-mock` boots on :8090 and can call back into the agent
 #
-# Usage:
-#   make dev                    # bring up all services
-#   make clean                  # tear down + delete kind cluster
-#
-# Environment:
-#   All services share deploy/dev.env.  Override individual vars in your shell
-#   before running compose; the shell env takes precedence over the file.
-#
-# Notes:
-#   - kind-init mounts the host Docker socket to run `kind` inside the
-#     container.  This requires the host Docker socket at /var/run/docker.sock.
-#   - The slack-mock service depends on T052 (deploy/slack_mock/app.py).
-#     It starts as soon as the image builds; the app itself is a Phase 3 task.
-#   - All inter-service communication uses the internal `triage` network.
-#     Only the ports listed under `ports:` are reachable from the host.
+# Bring up:
+#   docker compose -f deploy/docker-compose.yml up --build
 
 name: k8s-debugger
 
 services:
 
-  # --------------------------------------------------------------------------
-  # kind-init — one-shot init container
-  # Runs once on `make dev`; exits 0 on success.
-  # Responsibilities:
-  #   1. Create a kind cluster named k8s-debugger (if not exists).
-  #   2. Apply tests/fixtures/cluster/*.yaml workloads.
-  #   3. Emit per-tool SA token stubs into /run/secrets/mcp-sa/ (mcp-server
-  #      mounts the same named volume).
-  # --------------------------------------------------------------------------
-  kind-init:
-    image: alpine/k8s:1.29.3
-    # Mount host Docker socket so kind can create a k8s cluster on the host.
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - mcp_sa_tokens:/run/secrets/mcp-sa
-      - ..:/workspace:ro
-    networks:
-      - triage
-    env_file:
-      - dev.env
-    environment:
-      KIND_CLUSTER_NAME: k8s-debugger
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        echo "[kind-init] Installing kind + kubectl..."
-        apk add --no-cache kind kubectl curl 2>/dev/null || true
-
-        # 1. Create kind cluster (idempotent).
-        if ! kind get clusters 2>/dev/null | grep -q "$${KIND_CLUSTER_NAME}"; then
-          echo "[kind-init] Creating kind cluster $${KIND_CLUSTER_NAME}..."
-          kind create cluster --name "$${KIND_CLUSTER_NAME}" --wait 120s
-        else
-          echo "[kind-init] Kind cluster $${KIND_CLUSTER_NAME} already exists."
-        fi
-
-        # 2. Apply fixture cluster workloads (created in T054).
-        if [ -d /workspace/tests/fixtures/cluster ]; then
-          echo "[kind-init] Applying fixture workloads..."
-          kubectl apply -f /workspace/tests/fixtures/cluster/ \
-            --context "kind-$${KIND_CLUSTER_NAME}" || true
-        else
-          echo "[kind-init] tests/fixtures/cluster/ not found yet (T054 pending)."
-        fi
-
-        # 3. Emit stub SA token files for mcp-server (real tokens created by T077+).
-        echo "[kind-init] Creating stub SA token mounts..."
-        mkdir -p /run/secrets/mcp-sa
-        for action in restart-pod rollback-deployment scale-deployment delete-pod-to-reschedule; do
-          token_file="/run/secrets/mcp-sa/$${action}"
-          if [ ! -f "$${token_file}" ]; then
-            echo "stub-token-$${action}-replace-with-real-sa" > "$${token_file}"
-            chmod 0400 "$${token_file}"
-          fi
-        done
-
-        echo "[kind-init] Initialisation complete."
-    restart: "no"
-
-  # --------------------------------------------------------------------------
-  # mcp-server — MCP tool server (read + scoped write tools)
-  # research.md R5; physically separate process for Principle I boundary.
-  # Port 8081.
-  # --------------------------------------------------------------------------
-  mcp-server:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.mcp
-    ports:
-      - "8081:8081"
-    networks:
-      - triage
-    volumes:
-      - mcp_sa_tokens:/run/secrets/mcp-sa:ro
-    env_file:
-      - dev.env
-    environment:
-      MCP_TRANSPORT: http
-      MCP_HOST: "0.0.0.0"
-      MCP_PORT: "8081"
-    depends_on:
-      kind-init:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8081/health')\" 2>/dev/null || exit 0"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
-
-  # --------------------------------------------------------------------------
-  # agent — FastAPI + LangGraph workflow runner
-  # Entry point: src.agent.api.main:app  (implemented Phase 3 / T024)
-  # Port 8080.
-  # SQLite DB is created automatically at startup by src/agent/db.py.
-  # --------------------------------------------------------------------------
   agent:
     build:
       context: ..
@@ -145,25 +34,19 @@ services:
     environment:
       SQLITE_PATH: /app/data/agent.sqlite3
       SLACK_MOCK_URL: http://slack-mock:8090
-      MCP_SERVER_URL: http://mcp-server:8081
-    depends_on:
-      mcp-server:
-        condition: service_started
-      kind-init:
-        condition: service_completed_successfully
+    extra_hosts:
+      # So LLM_BASE_URL=http://host.docker.internal:11434/v1 works on Linux.
+      - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\" 2>/dev/null || exit 0"]
+      test:
+        - "CMD-SHELL"
+        - "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health',timeout=2).status==200 else 1)\""
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 20s
+      start_period: 30s
     restart: unless-stopped
 
-  # --------------------------------------------------------------------------
-  # slack-mock — tiny mock Slack receiver + callback forwarder
-  # deploy/slack_mock/app.py implemented in Phase 3 (T052).
-  # Port 8090.
-  # --------------------------------------------------------------------------
   slack-mock:
     build:
       context: ..
@@ -175,26 +58,18 @@ services:
     env_file:
       - dev.env
     environment:
+      AGENT_URL: http://agent:8080
       AGENT_CALLBACK_URL: http://agent:8080
       SLACK_MOCK_PORT: "8090"
     depends_on:
-      - agent
+      agent:
+        condition: service_started
     restart: unless-stopped
 
-# ------------------------------------------------------------------------------
-# Named volumes
-# ------------------------------------------------------------------------------
 volumes:
-  # SQLite database file; survives `docker compose down` (dropped by `make clean`).
   sqlite_data:
     driver: local
-  # Shared volume for per-tool SA tokens written by kind-init and read by mcp-server.
-  mcp_sa_tokens:
-    driver: local
 
-# ------------------------------------------------------------------------------
-# Networks
-# ------------------------------------------------------------------------------
 networks:
   triage:
     driver: bridge
