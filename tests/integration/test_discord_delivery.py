@@ -96,7 +96,7 @@ async def test_discord_delivery_posts_to_discord_only() -> None:
                 return_value=httpx.Response(200, json={"message_id": "should-not-be-called"})
             )
 
-            _, message_id = await chat_deliver(report)
+            _delivered_at, message_id = await chat_deliver(report)
 
         assert discord_route.called, "Discord bot endpoint was not called"
         assert not slack_route.called, "Slack endpoint should NOT be called when surface=discord"
@@ -132,7 +132,7 @@ async def test_slack_delivery_posts_to_slack_only() -> None:
                 return_value=httpx.Response(200, json={"message_id": "should-not-be-called"})
             )
 
-            delivered_at, message_id = await chat_deliver(report)
+            _delivered_at, message_id = await chat_deliver(report)
 
         assert slack_route.called, "Slack endpoint was not called"
         assert not discord_route.called, "Discord endpoint should NOT be called when surface=slack"
@@ -170,12 +170,52 @@ async def test_all_surface_posts_to_both() -> None:
                 )
             )
 
-            delivered_at, message_id = await chat_deliver(report)
+            _delivered_at, message_id = await chat_deliver(report)
 
         assert slack_route.called, "Slack endpoint was not called"
         assert discord_route.called, "Discord endpoint was not called"
         # message_id is from last successful delivery (discord, since it's second)
         assert message_id == "discord-001"
+    finally:
+        settings.chat_surface = original_surface
+        settings.slack_mock_url = original_slack_url
+        settings.discord_bot_url = original_discord_url
+
+
+@pytest.mark.asyncio
+async def test_invalid_chat_surface_raises() -> None:
+    report = _make_report()
+    original_surface = settings.chat_surface
+    settings.chat_surface = "bogus"
+    try:
+        with pytest.raises(ValueError, match="Invalid chat_surface"):
+            await chat_deliver(report)
+    finally:
+        settings.chat_surface = original_surface
+
+
+@pytest.mark.asyncio
+async def test_all_targets_failing_raises_last_error() -> None:
+    report = _make_report()
+
+    original_surface = settings.chat_surface
+    original_slack_url = settings.slack_mock_url
+    original_discord_url = settings.discord_bot_url
+
+    settings.chat_surface = "all"
+    settings.slack_mock_url = "http://localhost:9000"
+    settings.discord_bot_url = "http://localhost:8091"
+
+    try:
+        with respx.mock(assert_all_called=False) as rsps:
+            rsps.post("http://localhost:9000/messages").mock(
+                return_value=httpx.Response(500, json={"error": "slack down"})
+            )
+            rsps.post("http://localhost:8091/messages").mock(
+                return_value=httpx.Response(503, json={"error": "discord down"})
+            )
+            with pytest.raises(httpx.HTTPStatusError):
+                await chat_deliver(report)
     finally:
         settings.chat_surface = original_surface
         settings.slack_mock_url = original_slack_url

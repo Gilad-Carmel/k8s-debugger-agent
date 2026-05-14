@@ -347,18 +347,23 @@ async def chat_deliver(
     """
     POST the report to each configured chat surface.
 
-    Returns (delivered_at_iso, message_id) from the first successful delivery.
-    Raises the last exception only when no targets are configured.
+    Returns (delivered_at_iso, message_id) from the last successful delivery.
+    Raises when chat surface configuration is invalid or when all deliveries fail.
     """
     from src.agent.settings import settings
 
     surface = settings.chat_surface
+    valid_surfaces = {"slack", "discord", "all"}
+    if surface not in valid_surfaces:
+        raise ValueError(f"Invalid chat_surface={surface!r}. Expected one of: slack, discord, all.")
 
-    targets: list[str] = []
+    targets: list[tuple[str, str]] = []
     if surface in ("slack", "all"):
-        targets.append(settings.slack_mock_url)
+        targets.append(("slack", settings.slack_mock_url))
     if surface in ("discord", "all"):
-        targets.append(settings.discord_bot_url)
+        targets.append(("discord", settings.discord_bot_url))
+    if not targets:
+        raise RuntimeError("No chat delivery targets configured.")
 
     if solver_run:
         blocks = build_followup_blocks(report, solver_run)
@@ -372,14 +377,12 @@ async def chat_deliver(
     message_id = "unknown"
     last_exc: Exception | None = None
 
-    for url in targets:
+    delivered = False
+    for target_name, url in targets:
         try:
-            headers = {"Content-Type": "application/json"}
-            if url == settings.slack_mock_url:
-                tenant_id = getattr(report, "tenant_id", None)
-                if tenant_id is not None:
-                    headers["X-Tenant-Id"] = str(tenant_id)
-
+            headers: dict[str, str] = {"Content-Type": "application/json"}
+            if target_name == "slack":
+                headers["X-Tenant-Id"] = TENANT_ID
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.post(
                     f"{url}/messages",
@@ -390,6 +393,7 @@ async def chat_deliver(
                 data = resp.json()
                 delivered_at = data.get("delivered_at", delivered_at)
                 message_id = data.get("message_id", message_id)
+                delivered = True
                 logger.info(
                     "report delivered corr=%s surface=%s solver=%s",
                     report.correlation_id, url, solver_run is not None,
@@ -398,8 +402,10 @@ async def chat_deliver(
             logger.warning("delivery failed url=%s corr=%s: %s", url, report.correlation_id, exc)
             last_exc = exc
 
-    if last_exc and not targets:
+    if not delivered and last_exc:
         raise last_exc
+    if not delivered:
+        raise RuntimeError("No successful chat deliveries.")
 
     return delivered_at, message_id
 
