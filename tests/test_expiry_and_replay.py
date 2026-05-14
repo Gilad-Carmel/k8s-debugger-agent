@@ -80,6 +80,7 @@ async def test_expiry_sweep_transitions_pending_to_expired(
 
 
 async def test_checkpoint_replay_across_app_restarts(
+    requires_llm,
     fresh_db: Path,
     alertmanager_payload,
     sign_alertmanager,

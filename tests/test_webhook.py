@@ -18,7 +18,7 @@ async def test_health(client: httpx.AsyncClient) -> None:
 
 
 async def test_webhook_happy_path(
-    app_and_client, alertmanager_payload, sign_alertmanager
+    requires_llm, app_and_client, alertmanager_payload, sign_alertmanager
 ) -> None:
     from tests.conftest import graph_state
 

@@ -22,6 +22,31 @@ from asgi_lifespan import LifespanManager
 from src.agent.settings import settings
 
 
+# ---------------------------------------------------------------------------
+# LLM reachability gate — mirrors tests/integration/conftest.py.
+#
+# Person 1's router_node makes a real ChatOpenAI call. Tests that drive the
+# graph past the Router fail when no inference server is up. Tests that need
+# this can take the `requires_llm` fixture to auto-skip cleanly instead of
+# crashing with a 30+ second connection timeout.
+# ---------------------------------------------------------------------------
+def _llm_reachable() -> bool:
+    try:
+        url = settings.llm_base_url.rstrip("/").removesuffix("/v1") + "/v1/models"
+        return httpx.get(url, timeout=2.0).status_code == 200
+    except Exception:
+        return False
+
+
+@pytest.fixture
+def requires_llm() -> None:
+    if not _llm_reachable():
+        pytest.skip(
+            f"LLM server not reachable at {settings.llm_base_url} — "
+            "start an inference server (Ollama / LM Studio) and re-run."
+        )
+
+
 @pytest.fixture
 def fresh_db(tmp_path: Path) -> Path:
     """Per-test SQLite path. settings.SQLITE_PATH is shared; patch it."""

@@ -17,16 +17,58 @@ This document captures the technology decisions made during Phase 0. There are *
 
 ## R2. LLM provider and model tiering
 
-- **Decision**: Anthropic API for MVP, tiered:
-  - **Router** (Node 2) — Haiku-class (`claude-haiku-4-5-20251001`). Cheap, fast, deterministic structured output via pydantic schema.
-  - **Experts** (Node 3a/3b) — Sonnet-class (`claude-sonnet-4-6`). Higher reasoning quality for root-cause hypotheses; cost-justified by the lower fan-out (one Expert per incident, not per log line).
-  - **Reporter** (Node 4) — Haiku-class. Template-rendered summary; LLM only used for prose polish (skippable if budget tight).
-  - **Solver** (Node 5) — NO LLM call. Solver is deterministic code that executes a frozen `ProposedFix`. Putting an LLM in the write path is a Principle I violation; we don't.
-- **Rationale**: Satisfies Principle II (cheapest model that meets the bar at each stage). Per-stage choice is recorded in audit and can be re-tuned without re-architecting.
+- **Decision**: Local OpenAI-compatible inference server for MVP. The agent calls
+  `http://localhost:52984/v1/chat/completions` (or the value of `LLM_BASE_URL`)
+  using the `openai` Python SDK via `langchain-openai`'s `ChatOpenAI`. No
+  external API key or cloud dependency is required.
+  - **Router** (Node 2) — same local model, fast sampling profile: low
+    `max_tokens` (structured JSON label only), temperature 0. Env var:
+    `LLM_ROUTER_MODEL` (default: `LLM_MODEL`).
+  - **Experts** (Node 3a/3b) — same local model, full-context profile: higher
+    `max_tokens` (room for root-cause + cited evidence), temperature 0.2. Env
+    var: `LLM_EXPERT_MODEL` (default: `LLM_MODEL`).
+  - **Reporter** (Node 4) — same local model, prose-summary profile. LLM call
+    is skippable if budget (token ceiling) is tight; template fallback applies.
+  - **Solver** (Node 5) — NO LLM call. Solver is deterministic code that
+    executes a frozen `ProposedFix`. Putting an LLM in the write path is a
+    Principle I violation; we don't.
+- **Client layer**: `langchain-openai` (`ChatOpenAI`) is used for all calls.
+  `base_url` and `api_key` are injected from settings. For local servers that
+  require no authentication, `api_key` defaults to `"not-required"`. The
+  `.with_structured_output(PydanticModel)` helper generates the JSON-mode or
+  tool-calling schema automatically; if the served model does not support
+  native tool calling, `method="json_mode"` is used as a fallback.
+- **"Tiering" with a local server**: Because a single inference process
+  typically serves one model, "tiering" here means sampling-parameter
+  differentiation (max_tokens, temperature) rather than model-class switching.
+  Both `LLM_ROUTER_MODEL` and `LLM_EXPERT_MODEL` default to `LLM_MODEL` so
+  a minimal local setup sets exactly one env var. If two separate local
+  populations are available (e.g., a small fast model + a large slow model on
+  different ports), the two env vars can point to different `LLM_BASE_URL`
+  values via `LLM_ROUTER_BASE_URL` / `LLM_EXPERT_BASE_URL` overrides.
+- **Rationale**: Eliminates cloud API dependency and per-token cost for
+  development and self-hosted production, while keeping the same
+  OpenAI-compatible interface that every major local inference server
+  (Ollama, vLLM, LM Studio, llama.cpp server) already exposes. The
+  `langchain-openai` wrapper keeps the rest of the codebase provider-agnostic;
+  switching to a cloud provider later is a one-line settings change.
+  Satisfies Principle II (token ceiling enforced fail-closed; no USD ceiling
+  needed for local inference, but the ceiling mechanism is retained for
+  latency and memory budget reasons).
 - **Alternatives considered**:
-  - Single model for all stages (e.g., Sonnet everywhere) — rejected: ~3× the cost-per-incident for no measurable quality gain on the Router's classification task.
-  - OpenAI/Azure as primary — rejected for MVP: the agent codebase is built on the official Anthropic SDK already (see project preferences); we keep one provider for the MVP and add a second behind an interface in v2.
-- **Open**: Tier model IDs are configurable via `settings.py`; benchmark drives final pinning before GA.
+  - Anthropic SDK — rejected: requires an external API key and incurs per-token
+    cost; unsuitable for air-gapped or cost-sensitive environments.
+  - Hugging Face `transformers` in-process — rejected: loads model weights into
+    the agent process, blowing the 512 MiB RSS budget and coupling model
+    lifecycle to service lifecycle.
+  - Raw `httpx` against the local endpoint — rejected: `langchain-openai`
+    provides structured-output, retry, and provider-abstraction for free;
+    re-implementing those is wasted effort.
+- **Open**: Structured-output reliability varies by local model. If the served
+  model does not reliably emit valid JSON, the `llm.py` client will add a
+  retry-with-correction loop (prompt the model with the parse error; max 2
+  retries). The eval suite (T056–T060) gates on json-parse success rate ≥ 99%
+  before merge.
 
 ## R3. State persistence — Postgres in prod, SQLite in dev/CI
 
@@ -121,7 +163,8 @@ Each new runtime dependency below was evaluated for (a) OSI-approved license, (b
 | `fastapi` | MIT | Active | Mainstream async HTTP framework; pulled in transitively by much of the LLM stack. |
 | `uvicorn` | BSD-3-Clause | Active | Standard FastAPI runner. |
 | `pydantic` v2 | MIT | Active | Required for structured-output / Settings. |
-| `anthropic` | MIT | Active (Anthropic) | Primary LLM provider per R2. |
+| `langchain-openai` | MIT | Active (LangChain org) | `ChatOpenAI` wrapper for local OpenAI-compatible inference; `.with_structured_output()` used for Router/Expert nodes. Two-reviewer rule applies (model dependency). |
+| `openai` | MIT | Active (OpenAI) | Transitive dep of `langchain-openai`; also used directly in `llm.py` for low-level retry logic. Two-reviewer rule applies (model dependency). |
 | `sqlalchemy` 2.x | MIT | Active | Used for the audit table and as the substrate for both checkpointer back-ends. |
 | `asyncpg` | Apache-2.0 | Active | Postgres driver (prod). |
 | `aiosqlite` | MIT | Active | SQLite driver (dev/CI). |
@@ -130,7 +173,7 @@ Each new runtime dependency below was evaluated for (a) OSI-approved license, (b
 | `respx` (test only) | BSD-3-Clause | Active | HTTPX mock for contract tests. |
 | `deepeval` (test only) | Apache-2.0 | Active | LLM eval runner; thin in-house equivalent acceptable if `deepeval`'s API changes. |
 
-Two-reviewer rule (Principle VI / Governance) applies to any PR that adds, removes, or version-bumps a package in the `anthropic`, `langgraph`, `langchain-core`, or `mcp` lines (per "model dependencies").
+Two-reviewer rule (Principle VI / Governance) applies to any PR that adds, removes, or version-bumps a package in the `langchain-openai`, `openai`, `langgraph`, `langchain-core`, or `mcp` lines (per "model dependencies").
 
 ---
 
@@ -139,7 +182,7 @@ Two-reviewer rule (Principle VI / Governance) applies to any PR that adds, remov
 | Item | Resolved by |
 |---|---|
 | Workflow framework | R1 (LangGraph) |
-| Model selection per stage | R2 (Haiku for router/reporter, Sonnet for experts, no LLM in solver) |
+| Model selection per stage | R2 (local OpenAI-compatible endpoint via `langchain-openai`; single `LLM_MODEL` env var; Router uses fast sampling, Experts use full context; no LLM in Solver) |
 | State persistence | R3 (Postgres prod / SQLite dev, shared with audit) |
 | Webhook framework | R4 (FastAPI + HMAC) |
 | MCP framing | R5 (official SDK, separate process, per-tool SAs) |

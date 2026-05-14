@@ -15,6 +15,7 @@ from tests.conftest import fire_callback, fire_webhook
 async def _open_pending_incident(
     client, alertmanager_payload, sign_alertmanager
 ) -> str:
+    """Helper: drives the graph past the Router (requires a live LLM)."""
     r = await fire_webhook(client, alertmanager_payload(), sign_alertmanager)
     assert r.status_code == 202
     cid = r.json()["correlation_id"]
@@ -24,6 +25,7 @@ async def _open_pending_incident(
 
 
 async def test_approve_happy_path(
+    requires_llm,
     app_and_client,
     alertmanager_payload,
     sign_alertmanager,

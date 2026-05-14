@@ -26,8 +26,21 @@ def ingest_node(state: WorkflowState) -> WorkflowState:
 
     Returns a partial WorkflowState containing only the keys this node sets.
     LangGraph merges the return value into the accumulating state.
+
+    Pass-through: if ``filtered_evidence`` is already present in the incoming
+    state (e.g. pre-populated by a smoke-test or integration fixture), the
+    stub preserves it.  This lets ``test_graph_run.py`` inject custom evidence
+    without the ingest stub silently replacing it.
     """
-    print("[ingest_node] STUB — populating fake filtered_evidence")
+    existing = state.get("filtered_evidence")
+    if existing is not None:
+        print(
+            f"[ingest_node] STUB - evidence already present "
+            f"({existing.hit_count} hits); preserving caller evidence"
+        )
+        return {}  # type: ignore[return-value]
+
+    print("[ingest_node] STUB - populating fake filtered_evidence")
 
     fake_line = LogExcerpt(
         timestamp=datetime(2026, 5, 14, 10, 0, 0, tzinfo=timezone.utc),
