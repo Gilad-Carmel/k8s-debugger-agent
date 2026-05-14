@@ -10,10 +10,15 @@ binding.
 Design (research.md R2, plan.md §Technical Context, spec FR-005..FR-008):
   - Provider: any OpenAI-compatible inference server (Ollama by default).
     Configured via ``settings.llm_base_url`` + ``settings.llm_router_model``.
-  - Structured output is enforced by binding the ``ChatOpenAI`` instance to
-    ``_RouterDecision`` (a Pydantic model that mirrors ``RoutingDecision``
-    without the audit-metadata fields).  LangChain generates a tool-call
-    schema from the model and forces the LLM to invoke it.
+  - Structured output uses ``method="json_mode"`` (``response_format={"type":
+    "json_object"}``) rather than the default ``"function_calling"``.
+    Reason: Ollama models (qwen2.5, granite, etc.) do not reliably honour
+    tool-call schema binding via the OpenAI-compatible API — they either return
+    plain text or drop required fields.  json_mode is universally supported and
+    avoids the OpenAI SDK ``beta.chat.completions.parse`` code-path that raises
+    ``ValidationError`` when the model omits a required key.
+    The system prompt explicitly lists every required JSON field so the model
+    knows the full schema without relying on tool-call introspection.
   - Evidence binding: the LLM returns 0-based line indices into
     ``FilteredEvidence.hit_lines``; we map them back to ``LogExcerpt`` objects
     server-side.  This avoids asking the LLM to reproduce timestamps or byte
@@ -59,11 +64,19 @@ incident into exactly one of these four domains based on the log evidence:
   storage disk-full, I/O errors from a database or persistence layer.
 • Unknown — insufficient evidence to classify with confidence.
 
-Rules:
-1. Respond ONLY via the structured tool — never with prose.
-2. cited_indices MUST reference lines that directly support your classification.
-   Provide at least one index unless you choose Unknown.
-3. runners_up lists other domains considered, in descending confidence order.
+Respond ONLY with a JSON object — no prose, no markdown, no code fence.
+The object MUST contain exactly these four keys:
+
+  "domain"        : one of "Application", "Network", "Database", "Unknown"
+  "confidence"    : one of "low", "medium", "high"
+  "cited_indices" : list of 0-based integers from the numbered evidence list
+                    that directly support the classification.  Required
+                    non-empty unless domain is "Unknown".
+  "runners_up"    : list of [domain, confidence] pairs for other domains
+                    considered, in descending confidence order.  May be [].
+
+Example of a valid response:
+{"domain":"Application","confidence":"high","cited_indices":[0,2],"runners_up":[["Network","low"]]}
 """
 
 
@@ -160,17 +173,28 @@ def router_node(state: WorkflowState) -> WorkflowState:
                 f"Classify the Kubernetes incident for target `{target_desc}`.\n\n"
                 "## Log Evidence (pre-filtered hit lines)\n\n"
                 f"{evidence_text}\n\n"
-                "Return your classification using the structured tool."
+                "Return your classification as a JSON object with the four keys "
+                "described in the system prompt."
             )
         ),
     ]
 
     # ------------------------------------------------------------------
-    # Bind the LLM to _RouterDecision and invoke — include_raw=True gives
-    # us the AIMessage alongside the parsed model (for usage_metadata).
+    # Bind the LLM to _RouterDecision using json_mode — more compatible
+    # with local Ollama models than the default "function_calling" method.
+    # function_calling requires the model to honour tool-call schema binding
+    # via the OpenAI-compatible API; many local models return plain text or
+    # drop required fields instead.  json_mode sets
+    # response_format={"type":"json_object"} which every OpenAI-compatible
+    # server supports, and the system prompt describes the full JSON schema.
+    # include_raw=True gives us the AIMessage for usage_metadata extraction.
     # ------------------------------------------------------------------
     llm = _build_llm()
-    structured: Any = llm.with_structured_output(_RouterDecision, include_raw=True)
+    structured: Any = llm.with_structured_output(
+        _RouterDecision,
+        include_raw=True,
+        method="json_mode",
+    )
 
     result: dict[str, Any] = structured.invoke(messages)  # type: ignore[assignment]
 
