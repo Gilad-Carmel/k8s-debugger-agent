@@ -69,11 +69,17 @@ async def search_pod_logs(
     """
     Fetch logs for *pod* in *namespace* over [since, until) and return
     pre-filtered, redacted LogExcerpts.
+
+    Also fetches previous-container logs (previous=True) for any container
+    that has restarted, so crash stacktraces from the terminated instance are
+    included even after the pod has recovered.
     """
     v1 = get_core_v1_for_tool(_TOOL_NAME)
 
-    # Resolve which containers to sample.
-    containers_to_sample = await _resolve_containers(v1, namespace, pod, container)
+    # Resolve which containers to sample and which have restarted.
+    containers_to_sample, restarted_containers = await _resolve_containers(
+        v1, namespace, pod, container
+    )
 
     compiled = [re.compile(p) for p in (patterns or _DEFAULT_PATTERNS)]
 
@@ -83,11 +89,23 @@ async def search_pod_logs(
     pre_truncation_count = 0
     truncated = False
 
+    # Fetch current + previous logs for each container.
+    fetch_tasks: list[tuple[str, bool]] = []
     for ctr in containers_to_sample:
-        raw_log = await _fetch_with_retry(v1, namespace, pod, ctr, since, until)
+        fetch_tasks.append((ctr, False))
+        if ctr in restarted_containers:
+            fetch_tasks.append((ctr, True))  # also fetch previous container
+
+    for ctr, previous in fetch_tasks:
+        raw_log = await _fetch_with_retry(
+            v1, namespace, pod, ctr, since, until, previous=previous
+        )
         lines = raw_log.splitlines()
         total_lines += len(lines)
         total_bytes += len(raw_log.encode())
+
+        # Label previous-container lines so the LLM knows they're from a crash.
+        ctr_label = f"{ctr}:previous" if previous else ctr
 
         byte_offset = 0
         for line in lines:
@@ -98,7 +116,7 @@ async def search_pod_logs(
                     all_hit_lines.append(
                         LogExcerpt(
                             timestamp=ts,
-                            container=ctr,
+                            container=ctr_label,
                             text=redact(line),
                             byte_offset=byte_offset,
                         )
@@ -124,15 +142,27 @@ async def _resolve_containers(
     namespace: str,
     pod: str,
     container: Optional[str],
-) -> list[str]:
-    """Return the list of container names to sample."""
-    if container:
-        return [container]
+) -> tuple[list[str], set[str]]:
+    """
+    Return (containers_to_sample, restarted_containers).
+
+    restarted_containers is the subset whose restart_count > 0 — these will
+    also be fetched with previous=True to capture crash logs.
+    """
     pod_obj = await asyncio.to_thread(v1.read_namespaced_pod, pod, namespace)
-    spec = pod_obj.spec
-    if spec is None:
-        return []
-    return [c.name for c in (spec.containers or [])]
+
+    if container:
+        names = [container]
+    else:
+        spec = pod_obj.spec
+        names = [c.name for c in (spec.containers or [])] if spec else []
+
+    restarted: set[str] = set()
+    for cs in (pod_obj.status.container_statuses or []):
+        if cs.name in names and (cs.restart_count or 0) > 0:
+            restarted.add(cs.name)
+
+    return names, restarted
 
 
 async def _fetch_with_retry(
@@ -142,6 +172,7 @@ async def _fetch_with_retry(
     container: str,
     since: datetime,
     until: datetime,
+    previous: bool = False,
 ) -> str:
     """Fetch raw log text with bounded jittered retries on transient timeouts."""
     since_seconds = int((datetime.now(tz=timezone.utc) - since).total_seconds())
@@ -158,6 +189,7 @@ async def _fetch_with_retry(
                     container=container,
                     timestamps=True,
                     since_seconds=since_seconds,
+                    previous=previous,
                 ),
                 timeout=_PER_CALL_TIMEOUT,
             )
@@ -167,6 +199,9 @@ async def _fetch_with_retry(
         except ApiException as exc:
             if exc.status == 404:
                 raise FileNotFoundError(f"Pod '{pod}' not found in '{namespace}'") from exc
+            if exc.status == 400 and previous:
+                # No previous container exists — not an error, just return empty.
+                return ""
             if exc.status == 403:
                 raise PermissionError(
                     f"Forbidden: cannot read logs for pod '{pod}' in '{namespace}'"

@@ -129,6 +129,33 @@ class AgentSettings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
+    # Proactive log listener (feature 005-router-listener)
+    # Instead of waiting for Alertmanager webhooks, the listener polls
+    # MCP search_pod_logs continuously and fires the triage graph whenever
+    # error patterns are detected.
+    # ------------------------------------------------------------------
+    watch_namespaces: str = Field(
+        default="default",
+        description=(
+            "Comma-separated Kubernetes namespaces to poll for error logs. "
+            "Example: 'default,production,staging'."
+        ),
+    )
+    poll_interval_seconds: int = Field(
+        default=30,
+        description="Seconds between listener poll cycles.",
+    )
+    listener_lookback_minutes: int = Field(
+        default=5,
+        description="How many minutes back each poll looks for error log matches.",
+    )
+
+    @property
+    def watch_namespace_list(self) -> list[str]:
+        """Parsed list of namespaces to watch."""
+        return [ns.strip() for ns in self.watch_namespaces.split(",") if ns.strip()]
+
+    # ------------------------------------------------------------------
     # Backward-compatibility properties for the webhook / HITL / persistence
     # call sites that pre-date the rename. Read-only EXCEPT SQLITE_PATH
     # (writable so per-test fixtures can point at a tmp file).
