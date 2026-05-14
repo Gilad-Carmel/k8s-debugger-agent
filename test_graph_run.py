@@ -2,16 +2,20 @@
 """
 test_graph_run.py
 
-Smoke-test / demo script for the Phase 1 LangGraph scaffold.
+Smoke-test / demo script for the Phase 2 Router LLM call.
 
-Invokes the graph with a fake Alertmanager-style webhook payload,
-runs all stub nodes end-to-end, and pretty-prints the final WorkflowState.
+Invokes the graph with a synthetic Alertmanager-style webhook payload
+**and** a fake ``FilteredEvidence`` containing Go panic log lines.
+The router node makes a real Anthropic Haiku LLM call and should classify
+the incident as ``Application`` with at least one ``cited_evidence`` entry.
 
 Usage::
 
     python test_graph_run.py
 
-No external services required (no LLM, no MCP, no DB, no Slack).
+Requirements:
+  - ``ANTHROPIC_API_KEY`` must be set (env var or .env file at repo root).
+  - All other nodes (Ingest, Experts, Reporter, Solver) remain stubs.
 """
 
 from __future__ import annotations
@@ -29,7 +33,78 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from src.agent.graph.builder import build_graph
 from src.agent.graph.state import WorkflowState
-from src.shared.schemas import Incident, Target, TimeWindow
+from src.shared.schemas import (
+    FilteredEvidence,
+    Incident,
+    LogExcerpt,
+    Target,
+    TimeWindow,
+)
+
+
+# ---------------------------------------------------------------------------
+# Fake FilteredEvidence: Go panic log
+#
+# A realistic Go runtime panic cascade that any classifier should label
+# as "Application" — code-level crash, not network or database.
+# ---------------------------------------------------------------------------
+def make_fake_filtered_evidence() -> FilteredEvidence:
+    """
+    Build a ``FilteredEvidence`` with Go panic log lines.
+
+    The router LLM should:
+      - Classify domain as ``"Application"``
+      - Populate ``cited_evidence`` with at least one of these lines
+    """
+    base_ts = datetime(2026, 5, 14, 10, 0, 1, tzinfo=timezone.utc)
+
+    panic_lines: list[LogExcerpt] = [
+        LogExcerpt(
+            timestamp=base_ts,
+            container="api-server",
+            text="panic: runtime error: index out of range [3] with length 3",
+            byte_offset=0,
+        ),
+        LogExcerpt(
+            timestamp=base_ts,
+            container="api-server",
+            text="goroutine 1 [running]:",
+            byte_offset=58,
+        ),
+        LogExcerpt(
+            timestamp=base_ts,
+            container="api-server",
+            text="main.processRequest(0xc000104000, 0x3)",
+            byte_offset=80,
+        ),
+        LogExcerpt(
+            timestamp=base_ts,
+            container="api-server",
+            text="\t/app/handlers/api.go:42 +0x1a4",
+            byte_offset=119,
+        ),
+        LogExcerpt(
+            timestamp=base_ts,
+            container="api-server",
+            text="net/http.HandlerFunc.ServeHTTP(0xc0001a4000, {0x7f8b, 0x2a})",
+            byte_offset=151,
+        ),
+        LogExcerpt(
+            timestamp=base_ts.replace(second=2),
+            container="api-server",
+            text="exit status 2",
+            byte_offset=214,
+        ),
+    ]
+
+    return FilteredEvidence(
+        total_bytes=2048,
+        total_lines=420,
+        hit_lines=panic_lines,
+        hit_count=len(panic_lines),
+        truncated=False,
+        containers_sampled=["api-server"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -37,11 +112,11 @@ from src.shared.schemas import Incident, Target, TimeWindow
 # ---------------------------------------------------------------------------
 def make_fake_initial_state() -> WorkflowState:
     """
-    Simulate the Ingest node's *pre-state* — i.e. the fields that the webhook
-    handler populates before handing off to the LangGraph graph.
+    Simulate the Ingest node's output — the fields that the webhook handler
+    and the Ingest node populate before handing off to the Router.
 
-    In Phase 1 the Ingest node will fill in filtered_evidence, so we only
-    need correlation_id + incident here.
+    ``filtered_evidence`` is pre-populated with Go panic lines so the Router
+    LLM has something concrete to classify.
     """
     now = datetime.now(tz=timezone.utc)
 
@@ -61,10 +136,10 @@ def make_fake_initial_state() -> WorkflowState:
         status="pending",
     )
 
-    # Budget initialised to generous stubs (no real cost tracking yet)
     return WorkflowState(
         correlation_id=incident.correlation_id,
         incident=incident,
+        filtered_evidence=make_fake_filtered_evidence(),
         budget_remaining_tokens=50_000,
         budget_remaining_usd_micros=500_000,  # $0.50 in micros
     )
@@ -96,24 +171,34 @@ def _print_section(title: str, content: str) -> None:
 # ---------------------------------------------------------------------------
 def main() -> None:
     print("=" * 64)
-    print("  test_graph_run.py — Phase 1 LangGraph scaffold smoke-test")
+    print("  test_graph_run.py - Phase 2 Router LLM smoke-test")
+    print("  Go panic evidence -> expect domain='Application'")
     print("=" * 64)
 
     # Build and compile the graph
-    print("\n[setup] Compiling LangGraph StateGraph …")
+    print("\n[setup] Compiling LangGraph StateGraph ...")
     graph = build_graph()
     print("[setup] Graph compiled successfully.")
 
-    # Prepare fake initial state
+    # Prepare fake initial state (includes Go panic FilteredEvidence)
     initial_state = make_fake_initial_state()
     print(
-        f"\n[setup] Initial state ready — correlation_id={initial_state['correlation_id']}"
+        f"\n[setup] Initial state ready - correlation_id={initial_state['correlation_id']}"
     )
     print(f"[setup] Target: {initial_state['incident'].target.namespace}/"
           f"{initial_state['incident'].target.pod}")
 
+    evidence = initial_state.get("filtered_evidence")
+    if evidence:
+        print(
+            f"[setup] FilteredEvidence: {evidence.hit_count} hit lines  "
+            f"containers={evidence.containers_sampled}"
+        )
+        print("[setup] First hit line: "
+              f"{evidence.hit_lines[0].text!r}")
+
     # Invoke the graph
-    print("\n[run] Invoking graph …\n")
+    print("\n[run] Invoking graph (Router will call local LLM via Ollama) ...\n")
     final_state: WorkflowState = graph.invoke(initial_state)  # type: ignore[assignment]
 
     # Pretty-print results
@@ -151,15 +236,15 @@ def main() -> None:
             _safe_dump(solver_run),
         )
 
-    evidence = final_state.get("filtered_evidence")
-    if evidence:
+    evidence_out = final_state.get("filtered_evidence")
+    if evidence_out:
         _print_section(
             "filtered_evidence summary",
             (
-                f"  total_bytes={evidence.total_bytes}  "
-                f"total_lines={evidence.total_lines}  "
-                f"hit_count={evidence.hit_count}  "
-                f"truncated={evidence.truncated}"
+                f"  total_bytes={evidence_out.total_bytes}  "
+                f"total_lines={evidence_out.total_lines}  "
+                f"hit_count={evidence_out.hit_count}  "
+                f"truncated={evidence_out.truncated}"
             ),
         )
 
@@ -173,9 +258,55 @@ def main() -> None:
     print(f"\n  report.status  : {final_status}")
     print(f"  solver outcome : {solver_outcome}")
 
+    # ------------------------------------------------------------------
+    # Verification: assert the LLM routed Go panic → Application
+    # ------------------------------------------------------------------
     print("\n" + "=" * 64)
-    print("  END OF RUN — all stub nodes executed successfully.")
-    print("=" * 64 + "\n")
+    print("  VERIFICATION")
+    print("=" * 64)
+
+    errors: list[str] = []
+
+    if routing is None:
+        errors.append("FAIL: routing is None — router_node did not set state['routing']")
+    else:
+        if routing.domain != "Application":
+            errors.append(
+                f"FAIL: expected domain='Application', got {routing.domain!r}.  "
+                "Check the Go panic evidence and router prompt."
+            )
+        else:
+            print(f"  PASS  domain={routing.domain!r}  (expected 'Application')")
+
+        if not routing.cited_evidence:
+            errors.append(
+                "FAIL: cited_evidence is empty — router must cite ≥1 evidence "
+                "line for a non-Unknown domain (Principle IV, spec FR-007)."
+            )
+        else:
+            print(
+                f"  PASS  cited_evidence has {len(routing.cited_evidence)} item(s)"
+            )
+            for i, exc in enumerate(routing.cited_evidence):
+                print(f"        [{i}] {exc.text!r}")
+
+        print(
+            f"  INFO  confidence={routing.confidence!r}  "
+            f"model={routing.model!r}  tokens={routing.tokens}"
+        )
+
+    if errors:
+        print("\n  --- FAILURES ---")
+        for err in errors:
+            print(f"  {err}")
+        print("\n" + "=" * 64)
+        print("  SMOKE TEST FAILED")
+        print("=" * 64 + "\n")
+        sys.exit(1)
+    else:
+        print("\n" + "=" * 64)
+        print("  SMOKE TEST PASSED — Router correctly classified Go panic as Application")
+        print("=" * 64 + "\n")
 
 
 if __name__ == "__main__":
