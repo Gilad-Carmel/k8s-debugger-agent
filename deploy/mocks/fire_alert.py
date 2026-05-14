@@ -64,7 +64,7 @@ def _build_payload(domain: str, correlation_id: str) -> dict:
 
     return {
         "version": "4",
-        "groupKey": f"{{{{}}}}{{{alertname}}}",
+        "groupKey": f'{{}}:{{alertname="{alertname}"}}',
         "status": "firing",
         "receiver": "k8s-debugger",
         "groupLabels": {"alertname": alertname},
