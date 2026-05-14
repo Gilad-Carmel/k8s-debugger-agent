@@ -46,6 +46,7 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Coroutine
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -70,6 +71,7 @@ app = FastAPI(title="Agent Mock")
 
 # in-memory store: correlation_id -> record dict
 _store: dict[str, dict[str, Any]] = {}
+_background_tasks: set[asyncio.Task[None]] = set()
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +89,21 @@ def _verify_hmac(body: bytes, signature: str) -> bool:
 
 def _sign(body: bytes) -> str:
     return hmac.new(AGENT_SECRET.encode(), body, hashlib.sha256).hexdigest()
+
+
+def _track_background_task(coro: Coroutine[Any, Any, None]) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+
+    def _cleanup(completed: asyncio.Task[None]) -> None:
+        _background_tasks.discard(completed)
+        if completed.cancelled():
+            return
+        exc = completed.exception()
+        if exc is not None:
+            logger.error("background task failed", exc_info=exc)
+
+    task.add_done_callback(_cleanup)
 
 
 def _build_record(
@@ -213,7 +230,7 @@ async def alertmanager_webhook(request: Request) -> dict[str, str]:
 
     correlation_id = labels.get("correlation_id") or str(uuid.uuid4())
 
-    asyncio.create_task(_run_triage(correlation_id, domain))
+    _track_background_task(_run_triage(correlation_id, domain))
 
     logger.info("accepted alert corr=%s domain=%s", correlation_id, domain)
     return {"status": "accepted", "correlation_id": correlation_id}
@@ -255,7 +272,7 @@ async def approve_callback(request: Request) -> dict[str, str]:
         await _post_to_chat(executed_record)
         _store.pop(correlation_id, None)
 
-    asyncio.create_task(_solver_task())
+    _track_background_task(_solver_task())
 
     logger.info("approved corr=%s — solver running", correlation_id)
     return {"status": "ok"}
