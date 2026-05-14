@@ -123,7 +123,7 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 - [ ] T045 [US1] Ingest node: TTFT ack emitted to slack-mock before any LLM call; calls the three MCP read tools concurrently; populates `evidence` on `WorkflowState` in `src/agent/graph/nodes/ingest.py` (depends on T031, T041-T043)
 - [x] T046 [US1] Router node (fast-sampling profile, structured pydantic output via `.with_structured_output()`: `domain`, `confidence`, `cited_evidence ≥1` unless Unknown, `runners_up`) in `src/agent/graph/nodes/router.py` (FR-005..FR-008; depends on T027)
 - [ ] T047 [US1] Expert base protocol + shared prompt builder in `src/agent/graph/nodes/experts/_base.py`
-- [ ] T048 [P] [US1] Application Expert node in `src/agent/graph/nodes/experts/application.py` (full-context profile via `llm.py`; produces `ExpertDiagnosis` with cited evidence + `ProposedFix | None`)
+- [x] T048 [P] [US1] Application Expert node in `src/agent/graph/nodes/experts/application.py` (full-context profile via `llm.py`; produces `ExpertDiagnosis` with cited evidence + `ProposedFix | None`)
 - [ ] T049 [P] [US1] Network Expert node in `src/agent/graph/nodes/experts/network.py`
 - [ ] T050 [P] [US1] Database Expert node in `src/agent/graph/nodes/experts/database.py`
 - [ ] T051 [US1] Reporter node: assemble `Report`, render Block Kit blocks, POST to slack-mock, set `delivered_at` + `approval_deadline`, persist `report_delivered` audit row in `src/agent/graph/nodes/reporter.py` (FR-013, FR-014; depends on T024)
