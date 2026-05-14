@@ -37,6 +37,7 @@ Constitution compliance:
 
 from __future__ import annotations
 
+import logging
 from typing import Any, List
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -47,6 +48,8 @@ from src.agent.graph.state import WorkflowState
 from src.agent.settings import settings
 from src.shared.labels import DOMAINS, Domain
 from src.shared.schemas import FilteredEvidence, LogExcerpt, RoutingDecision
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -238,11 +241,14 @@ def router_node(state: WorkflowState) -> WorkflowState:
 
     # Enforce Principle IV: ≥1 cited item when domain != Unknown.
     domain: Domain = parsed.domain
+    force_low_confidence = False
     if domain != "Unknown" and not cited:
-        if hit_lines:
-            cited = [hit_lines[0]]  # fallback to first available line
-        else:
-            domain = "Unknown"      # no evidence → cannot classify
+        logger.warning(
+            "non-Unknown classification without valid citations; demoting to "
+            "Unknown to avoid synthesized provenance"
+        )
+        domain = "Unknown"
+        force_low_confidence = True
 
     # ------------------------------------------------------------------
     # Parse runners_up: [[domain_str, confidence_str], ...]
@@ -261,6 +267,8 @@ def router_node(state: WorkflowState) -> WorkflowState:
 
     # Normalise confidence: clamp any unexpected value to "low".
     confidence = parsed.confidence if parsed.confidence in valid_confidences else "low"
+    if force_low_confidence:
+        confidence = "low"
 
     routing = RoutingDecision(
         domain=domain,
