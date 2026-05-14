@@ -347,7 +347,7 @@ async def chat_deliver(
     """
     POST the report to each configured chat surface.
 
-    Returns (delivered_at_iso, message_id) from the last successful delivery.
+    Returns the most recently observed (delivered_at_iso, message_id) from successful deliveries.
     Raises when chat surface configuration is invalid or when all deliveries fail.
     """
     from src.agent.settings import settings
@@ -359,9 +359,13 @@ async def chat_deliver(
 
     targets: list[tuple[str, str]] = []
     if surface in ("slack", "all"):
-        targets.append(("slack", settings.slack_mock_url))
+        slack_url = (settings.slack_mock_url or "").strip()
+        if slack_url:
+            targets.append(("slack", slack_url))
     if surface in ("discord", "all"):
-        targets.append(("discord", settings.discord_bot_url))
+        discord_url = (settings.discord_bot_url or "").strip()
+        if discord_url:
+            targets.append(("discord", discord_url))
     if not targets:
         raise RuntimeError("No chat delivery targets configured.")
 
@@ -402,10 +406,11 @@ async def chat_deliver(
             logger.warning("delivery failed url=%s corr=%s: %s", url, report.correlation_id, exc)
             last_exc = exc
 
-    if not delivered and last_exc:
-        raise last_exc
     if not delivered:
-        raise RuntimeError("No successful chat deliveries.")
+        if last_exc is None:
+            logger.error("chat delivery ended without success or captured exception corr=%s", report.correlation_id)
+            raise RuntimeError(f"No successful chat deliveries to {len(targets)} target(s).")
+        raise last_exc
 
     return delivered_at, message_id
 
