@@ -1,17 +1,17 @@
 """tests/test_webhook.py — POST /webhook/alertmanager scenarios."""
+
 from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from datetime import datetime, timezone
-
 from src.agent.audit import fetch_chain
 from src.agent.db import get_conn
-from tests.conftest import silence_graph
-from tests.conftest import fire_webhook
+from src.agent.settings import settings
+from tests.conftest import fire_webhook, silence_graph
 
 
 async def test_health(client: httpx.AsyncClient) -> None:
@@ -69,9 +69,7 @@ async def test_webhook_missing_signature_header(
     assert r.status_code == 401
 
 
-async def test_webhook_malformed_body(
-    client: httpx.AsyncClient, sign_alertmanager
-) -> None:
+async def test_webhook_malformed_body(client: httpx.AsyncClient, sign_alertmanager) -> None:
     body = b'{"not": "valid alertmanager"}'
     r = await client.post(
         "/webhook/alertmanager",
@@ -121,7 +119,93 @@ async def test_webhook_dedup_returns_same_correlation_id(
     assert any(r["stage"] == "incident_deduped" for r in chain)
 
 
-async def test_webhook_resolved_no_prior_firing(
+async def test_webhook_dedup_window_uses_runtime_setting(
+    app_and_client, alertmanager_payload, sign_alertmanager
+) -> None:
+    app, client = app_and_client
+    silence_graph(app)
+    previous_window = settings.dedup_window_seconds
+    settings.dedup_window_seconds = 60
+    try:
+        payload = alertmanager_payload(starts_at=datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc))
+        r1 = await fire_webhook(client, payload, sign_alertmanager)
+        assert r1.status_code == 202
+        cid1 = r1.json()["correlation_id"]
+        assert r1.json()["deduplicated"] is False
+
+        stale_seen = (datetime.now(timezone.utc) - timedelta(seconds=61)).isoformat()
+        async with get_conn() as conn:
+            await conn.execute(
+                "UPDATE incidents SET last_seen_at = ? WHERE correlation_id = ?",
+                (stale_seen, cid1),
+            )
+            await conn.commit()
+
+        r2 = await fire_webhook(client, payload, sign_alertmanager)
+        assert r2.status_code == 202
+        body2 = r2.json()
+        assert body2["deduplicated"] is False
+        assert body2["correlation_id"] != cid1
+    finally:
+        settings.dedup_window_seconds = previous_window
+
+
+async def test_webhook_approval_deadline_uses_seconds_precision(
+    app_and_client, alertmanager_payload, sign_alertmanager
+) -> None:
+    app, client = app_and_client
+    silence_graph(app)
+    previous_window = settings.approval_window_seconds
+    settings.approval_window_seconds = 90
+    try:
+        r = await fire_webhook(client, alertmanager_payload(), sign_alertmanager)
+        assert r.status_code == 202
+        cid = r.json()["correlation_id"]
+
+        async with get_conn() as conn:
+            cur = await conn.execute(
+                "SELECT received_at, approval_deadline FROM incidents WHERE correlation_id = ?",
+                (cid,),
+            )
+            row = await cur.fetchone()
+
+        assert row is not None
+        received_at = datetime.fromisoformat(row["received_at"])
+        approval_deadline = datetime.fromisoformat(row["approval_deadline"])
+        assert 89 <= (approval_deadline - received_at).total_seconds() <= 91
+    finally:
+        settings.approval_window_seconds = previous_window
+
+
+async def test_webhook_dedup_is_not_split_by_startsat_bucket_boundary(
+    app_and_client, alertmanager_payload, sign_alertmanager
+) -> None:
+    app, client = app_and_client
+    silence_graph(app)
+    previous_window = settings.dedup_window_seconds
+    settings.dedup_window_seconds = 60
+    try:
+        r1 = await fire_webhook(
+            client,
+            alertmanager_payload(starts_at=datetime(2026, 1, 1, 9, 59, 58, tzinfo=timezone.utc)),
+            sign_alertmanager,
+        )
+        assert r1.status_code == 202
+        cid1 = r1.json()["correlation_id"]
+
+        r2 = await fire_webhook(
+            client,
+            alertmanager_payload(starts_at=datetime(2026, 1, 1, 10, 0, 2, tzinfo=timezone.utc)),
+            sign_alertmanager,
+        )
+        assert r2.status_code == 202
+        assert r2.json()["deduplicated"] is True
+        assert r2.json()["correlation_id"] == cid1
+    finally:
+        settings.dedup_window_seconds = previous_window
+
+
+async def test_webhook_resolved_short_circuits(
     client: httpx.AsyncClient, alertmanager_payload, sign_alertmanager
 ) -> None:
     """Resolved alert with no matching firing in the dedup window: record

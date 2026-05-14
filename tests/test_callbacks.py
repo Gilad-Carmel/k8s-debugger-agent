@@ -87,7 +87,7 @@ async def test_approve_happy_path(
     assert "solver_run" in state, f"solver did not run; state keys: {list(state)}"
 
 
-async def test_reject_flips_status_and_audits(
+async def test_reject_does_not_invoke_solver(
     app_and_client,
     sign_slack,
     callback_payload,
@@ -116,8 +116,6 @@ async def test_reject_flips_status_and_audits(
 
 async def test_callback_bad_signature_rejected(
     client: httpx.AsyncClient,
-    alertmanager_payload,
-    sign_alertmanager,
     sign_slack,
     callback_payload,
 ) -> None:
@@ -149,8 +147,6 @@ async def test_callback_unknown_correlation_id_returns_404(
 
 async def test_callback_wrong_role_returns_403_and_audits(
     client: httpx.AsyncClient,
-    alertmanager_payload,
-    sign_alertmanager,
     sign_slack,
     callback_payload,
 ) -> None:
@@ -260,8 +256,6 @@ async def test_startup_no_recovery_when_no_approved_incidents(fresh_db) -> None:
 
 async def test_callback_after_deadline_returns_approval_expired(
     client: httpx.AsyncClient,
-    alertmanager_payload,
-    sign_alertmanager,
     sign_slack,
     callback_payload,
 ) -> None:
