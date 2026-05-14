@@ -123,19 +123,51 @@ async def test_webhook_dedup_window_uses_runtime_setting(
     previous_window = settings.dedup_window_seconds
     settings.dedup_window_seconds = 60
     try:
-        start = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
-        r1 = await fire_webhook(client, alertmanager_payload(starts_at=start), sign_alertmanager)
+        payload = alertmanager_payload(starts_at=datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc))
+        r1 = await fire_webhook(client, payload, sign_alertmanager)
         assert r1.status_code == 202
         cid1 = r1.json()["correlation_id"]
         assert r1.json()["deduplicated"] is False
 
-        r2 = await fire_webhook(
-            client, alertmanager_payload(starts_at=start + timedelta(seconds=61)), sign_alertmanager
-        )
+        stale_seen = (datetime.now(timezone.utc) - timedelta(seconds=61)).isoformat()
+        async with get_conn() as conn:
+            await conn.execute(
+                "UPDATE incidents SET last_seen_at = ? WHERE correlation_id = ?",
+                (stale_seen, cid1),
+            )
+            await conn.commit()
+
+        r2 = await fire_webhook(client, payload, sign_alertmanager)
         assert r2.status_code == 202
         body2 = r2.json()
         assert body2["deduplicated"] is False
         assert body2["correlation_id"] != cid1
+    finally:
+        settings.dedup_window_seconds = previous_window
+
+
+async def test_webhook_dedup_is_not_split_by_startsat_bucket_boundary(
+    client: httpx.AsyncClient, alertmanager_payload, sign_alertmanager
+) -> None:
+    previous_window = settings.dedup_window_seconds
+    settings.dedup_window_seconds = 60
+    try:
+        r1 = await fire_webhook(
+            client,
+            alertmanager_payload(starts_at=datetime(2026, 1, 1, 9, 59, 58, tzinfo=timezone.utc)),
+            sign_alertmanager,
+        )
+        assert r1.status_code == 202
+        cid1 = r1.json()["correlation_id"]
+
+        r2 = await fire_webhook(
+            client,
+            alertmanager_payload(starts_at=datetime(2026, 1, 1, 10, 0, 2, tzinfo=timezone.utc)),
+            sign_alertmanager,
+        )
+        assert r2.status_code == 202
+        assert r2.json()["deduplicated"] is True
+        assert r2.json()["correlation_id"] == cid1
     finally:
         settings.dedup_window_seconds = previous_window
 

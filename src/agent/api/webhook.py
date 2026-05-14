@@ -6,8 +6,9 @@ POST /webhook/alertmanager — Alert Intake.
 Per contracts/alertmanager_webhook.md:
   1. HMAC verify raw body (X-Alertmanager-Signature). Fail → 401, audit.
   2. Parse Alertmanager v4 subset. Fail → 400/422.
-  3. Dedup fingerprint = sha256(groupKey|namespace|pod|floor(startsAt/window)).
-     Existing within window ⇒ update last_seen_at, return 202 deduped.
+  3. Sliding-window dedup by (groupKey|namespace|pod):
+     Existing incident with last_seen_at inside the configured window
+     ⇒ update last_seen_at, return 202 deduped.
   4. New ⇒ insert incidents row, audit webhook_received, kick off graph
      run as a background asyncio task, return 202.
 """
@@ -17,8 +18,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import math
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -65,9 +64,8 @@ def _verify_signature(body: bytes, signature: Optional[str]) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
-def _dedup_fingerprint(group_key: str, namespace: str, pod: str, starts_at: datetime) -> str:
-    bucket = math.floor(starts_at.timestamp() / settings.dedup_window_seconds)
-    raw = f"{group_key}|{namespace}|{pod}|{bucket}".encode()
+def _dedup_key(group_key: str, namespace: str, pod: str) -> str:
+    raw = f"{group_key}|{namespace}|{pod}".encode()
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -164,21 +162,30 @@ async def alertmanager_webhook(
             content={"correlation_id": cid, "deduplicated": False, "status": "resolved"},
         )
 
-    starts_at = payload.alerts[0].startsAt
-    if starts_at.tzinfo is None:
-        starts_at = starts_at.replace(tzinfo=timezone.utc)
-    fingerprint = _dedup_fingerprint(payload.groupKey, namespace, pod, starts_at)
+    dedup_key = _dedup_key(payload.groupKey, namespace, pod)
 
     # 3. Dedup check + 4. insert/update
     now_iso = datetime.now(timezone.utc).isoformat()
+    dedup_cutoff_iso = (
+        datetime.now(timezone.utc) - timedelta(seconds=settings.dedup_window_seconds)
+    ).isoformat()
     deadline_iso = (
         datetime.now(timezone.utc) + timedelta(minutes=settings.APPROVAL_WINDOW_MINUTES)
     ).isoformat()
 
     async with get_conn() as conn:
         cur = await conn.execute(
-            "SELECT correlation_id FROM incidents WHERE dedup_fingerprint = ?",
-            (fingerprint,),
+            """
+            SELECT correlation_id
+            FROM incidents
+            WHERE source_alert_id = ?
+              AND namespace = ?
+              AND pod = ?
+              AND last_seen_at > ?
+            ORDER BY last_seen_at DESC
+            LIMIT 1
+            """,
+            (payload.groupKey, namespace, pod, dedup_cutoff_iso),
         )
         existing = await cur.fetchone()
         await cur.close()
@@ -195,7 +202,7 @@ async def alertmanager_webhook(
                 cid,
                 stage="incident_deduped",
                 payload={
-                    "dedup_fingerprint": fingerprint,
+                    "dedup_key": dedup_key,
                     "first_seen_correlation_id": cid,
                     "last_seen_at": now_iso,
                 },
@@ -207,6 +214,7 @@ async def alertmanager_webhook(
 
         cid = new_correlation_id()
         bind(cid)
+        fingerprint = hashlib.sha256(f"{dedup_key}|{cid}".encode()).hexdigest()
         await conn.execute(
             """
             INSERT INTO incidents (
