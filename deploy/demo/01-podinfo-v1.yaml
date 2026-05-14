@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podinfo
+  namespace: demo
+  labels:
+    app: podinfo
+    version: v1
+  annotations:
+    demo.k8s-debugger/scenario: base
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: podinfo
+  template:
+    metadata:
+      labels:
+        app: podinfo
+        version: v1
+    spec:
+      containers:
+        - name: podinfo
+          image: ghcr.io/stefanprodan/podinfo:6.7.1
+          ports:
+            - containerPort: 9898
+              name: http
+          resources:
+            requests:
+              memory: "16Mi"
+              cpu: "50m"
+            limits:
+              memory: "32Mi"   # intentionally low — makes OOM demo deterministic
+              cpu: "100m"
+          env:
+            - name: PODINFO_UI_MESSAGE
+              value: "k8s-debugger demo — v1"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9898
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9898
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3

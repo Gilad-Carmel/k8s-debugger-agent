@@ -1,0 +1,56 @@
+# Bad deployment — sets PODINFO_RUNTIME_ERROR=true so every handler returns HTTP 500.
+# Apply with:  kubectl apply -f deploy/demo/02-podinfo-v2-bad.yaml
+# Revert with: kubectl apply -f deploy/demo/01-podinfo-v1.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podinfo
+  namespace: demo
+  labels:
+    app: podinfo
+    version: v2-bad
+  annotations:
+    demo.k8s-debugger/scenario: bad-deploy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: podinfo
+  template:
+    metadata:
+      labels:
+        app: podinfo
+        version: v2-bad
+    spec:
+      containers:
+        - name: podinfo
+          image: ghcr.io/stefanprodan/podinfo:6.7.1
+          ports:
+            - containerPort: 9898
+              name: http
+          resources:
+            requests:
+              memory: "16Mi"
+              cpu: "50m"
+            limits:
+              memory: "32Mi"
+              cpu: "100m"
+          env:
+            - name: PODINFO_RUNTIME_ERROR
+              value: "true"
+            - name: PODINFO_UI_MESSAGE
+              value: "ERROR: database connection refused"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9898
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9898
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
