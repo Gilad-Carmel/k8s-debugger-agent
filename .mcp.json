@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "k8s-debugger": {
+      "type": "stdio",
+      "command": "C:\\Python313\\python.exe",
+      "args": ["-m", "src.mcp_server"],
+      "cwd": "C:\\Users\\nadav\\Documents\\Hackathon\\k8s-debugger-agent",
+      "env": {
+        "APPROVAL_TOKEN_SECRET": "dev-secret-change-me"
+      }
+    }
+  }
+}
