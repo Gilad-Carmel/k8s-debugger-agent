@@ -35,17 +35,17 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 
 **Purpose**: Repo skeleton, language toolchain, lint/type/test runners, container build, dev compose stack.
 
-- [ ] T001 Create repo source layout: `src/agent/{api,graph/nodes/experts}`, `src/mcp_server/tools`, `src/shared`, `tests/{contract,integration,eval,unit,perf,fixtures}`, `deploy/{slack_mock,k8s,sql}` per plan.md §Project Structure
-- [ ] T002 Initialize Python 3.11 project in `pyproject.toml` with runtime deps from research.md §R13 (langgraph≥0.2, langchain-core, langchain-openai, openai, mcp, kubernetes, fastapi, uvicorn, pydantic v2, sqlalchemy, asyncpg, aiosqlite, structlog, opentelemetry-api/sdk) and dev deps (pytest, pytest-asyncio, respx, deepeval, ruff, black, mypy)
-- [ ] T003 [P] Configure `ruff` (with `C901` cyclomatic-cap 15 per Principle VI) and `black` in `pyproject.toml`
-- [ ] T004 [P] Configure `mypy --strict` in `pyproject.toml` with per-package overrides for `tests/`
-- [ ] T005 [P] Configure `pytest` + `pytest-asyncio` + coverage gates in `pyproject.toml` (per-module floors from plan.md Principle VII)
-- [ ] T006 [P] CI workflow at `.github/workflows/ci.yml` running lint, mypy, unit, contract, integration, eval, hallucination, perf, audit-completeness; coverage gates enforced
-- [ ] T007 [P] Create `Makefile` with targets `dev`, `test`, `test-unit`, `eval`, `perf`, `audit`, `audit-check`, `smoke`, `clean` per quickstart.md §Running the test suite
-- [ ] T008 [P] Dev env template at `deploy/dev.env` (`LLM_BASE_URL`, `LLM_MODEL`, `LLM_ROUTER_MODEL`, `LLM_EXPERT_MODEL`, `LLM_API_KEY`, `ALERTMANAGER_HMAC_SECRET`, `SLACK_MOCK_SECRET`, `BUDGET_TOKENS_PER_INCIDENT`)
-- [ ] T009 [P] Dockerfile for the agent service at `deploy/Dockerfile.agent`
-- [ ] T010 [P] Dockerfile for the MCP server at `deploy/Dockerfile.mcp`
-- [ ] T011 docker-compose stack at `deploy/docker-compose.yml` (agent, mcp-server, slack-mock, postgres, kind init container, fixture loader)
+- [X] T001 Create repo source layout: `src/agent/{api,graph/nodes/experts}`, `src/mcp_server/tools`, `src/shared`, `tests/{contract,integration,eval,unit,perf,fixtures}`, `deploy/{slack_mock,k8s}` per plan.md §Project Structure
+- [X] T002 Initialize Python 3.11 project in `pyproject.toml` with runtime deps from research.md §R13 (langgraph≥0.2, langchain-core, langchain-openai, openai, mcp, kubernetes, fastapi, uvicorn, pydantic v2, aiosqlite, structlog, opentelemetry-api/sdk) and dev deps (pytest, pytest-asyncio, respx, deepeval, ruff, black, mypy)
+- [X] T003 [P] Configure `ruff` (with `C901` cyclomatic-cap 15 per Principle VI) and `black` in `pyproject.toml`
+- [X] T004 [P] Configure `mypy --strict` in `pyproject.toml` with per-package overrides for `tests/`
+- [X] T005 [P] Configure `pytest` + `pytest-asyncio` + coverage gates in `pyproject.toml` (per-module floors from plan.md Principle VII)
+- [X] T006 [P] CI workflow at `.github/workflows/ci.yml` running lint, mypy, unit, contract, integration, eval, hallucination, perf, audit-completeness; coverage gates enforced
+- [X] T007 [P] Create `Makefile` with targets `dev`, `test`, `test-unit`, `eval`, `perf`, `audit`, `audit-check`, `smoke`, `clean` per quickstart.md §Running the test suite
+- [X] T008 [P] Dev env template at `deploy/dev.env` (`LLM_BASE_URL`, `LLM_MODEL`, `LLM_ROUTER_MODEL`, `LLM_EXPERT_MODEL`, `LLM_API_KEY`, `ALERTMANAGER_HMAC_SECRET`, `SLACK_MOCK_SECRET`, `BUDGET_TOKENS_PER_INCIDENT`)
+- [X] T009 [P] Dockerfile for the agent service at `deploy/Dockerfile.agent`
+- [X] T010 [P] Dockerfile for the MCP server at `deploy/Dockerfile.mcp`
+- [X] T011 docker-compose stack at `deploy/docker-compose.yml` (agent, mcp-server, slack-mock, kind init container; SQLite on named volume)
 
 **Checkpoint**: `make dev` brings the stack up; container builds succeed.
 
@@ -72,11 +72,11 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 - [ ] T019 [P] OpenTelemetry tracer + node-entry/exit + MCP-call span helpers in `src/agent/telemetry.py` (Principle IX)
 - [x] T020 [P] Double-pass regex redaction (boundary + pre-LLM) in `src/agent/redaction.py` per research.md §R7 (bearer/AWS/GCP/Azure/SA-token/JWT/DB-conn-string patterns); 95% coverage tier
 - [ ] T021 [P] Per-incident token + USD-micros budget enforcement (fail-closed) in `src/agent/budget.py` per research.md §R8; 95% coverage tier
-- [ ] T022 SQL migration for the append-only `audit_record` table at `deploy/sql/001_audit_record.sql` per contracts/audit_record.md (schema + indexes + REVOKE UPDATE/DELETE/TRUNCATE)
-- [ ] T023 SQLAlchemy 2.x engine + async session factory (postgres prod / sqlite dev switch) in `src/agent/db.py` (depends on T022)
+- [ ] T022 SQLite DDL bootstrap: ensure `audit_record` table + indexes are created by `src/agent/db.py` `init_db()` on startup (replaces the Postgres `deploy/sql/` migration approach); add unit test asserting no UPDATE/DELETE SQL targeting `audit_record` exists in any source file (application-layer append-only enforcement; see research.md §R3)
+- [x] T023 SQLite async connection helper (`aiosqlite`, WAL + FK pragmas) + `init_db()` in `src/agent/db.py` (depends on T022)
 - [ ] T024 Append-only audit writer (one row per stage, sequence_no monotonic per correlation_id) in `src/agent/audit.py` per contracts/audit_record.md (depends on T023)
 - [x] T025 [P] WorkflowState TypedDict in `src/agent/graph/state.py` per data-model.md §WorkflowState (depends on T016)
-- [x] T026 LangGraph builder skeleton + checkpointer wiring (`langgraph.checkpoint.postgres` prod / `langgraph.checkpoint.sqlite` dev) in `src/agent/graph/builder.py` (depends on T023, T025) — nodes registered as no-ops, conditional edges scaffolded
+- [x] T026 LangGraph builder skeleton + checkpointer wiring (`langgraph.checkpoint.sqlite` via `AsyncSqliteSaver`) in `src/agent/graph/builder.py` (depends on T023, T025) — nodes registered as no-ops, conditional edges scaffolded
 - [ ] T027 Local-LLM client + structured-output helper (`ChatOpenAI` from `langchain-openai` with configurable `base_url`/`api_key`; router profile: low max_tokens + temp=0; expert profile: full-context + temp=0.2; JSON-mode fallback; model recorded for audit; token accounting hook) in `src/agent/llm.py` per research.md §R2 (depends on T021, T024)
 - [ ] T028 [P] FastAPI app factory + `/health` endpoint in `src/agent/api/health.py` and app wiring in `src/agent/api/__init__.py`
 
@@ -96,7 +96,7 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 - [x] T034 [P] Unit tests for redaction patterns (positive + negative) in `tests/unit/test_redaction.py` (95% coverage gate)
 - [ ] T035 [P] Unit tests for budget fail-closed behavior in `tests/unit/test_budget.py` (95% coverage gate)
 - [x] T036 [P] Unit tests for catalog Forward → Inverse Action mapping table in `tests/unit/test_inverse_actions.py`
-- [ ] T037 [P] Unit tests for audit append-only invariants (REVOKE enforcement, sequence_no monotonicity, redaction in `prompt`/`response`) in `tests/unit/test_audit_record.py`
+- [ ] T037 [P] Unit tests for audit append-only invariants (no UPDATE/DELETE SQL targeting `audit_record` anywhere in `src/`, sequence_no monotonicity, redaction in `prompt`/`response`) in `tests/unit/test_audit_record.py`
 
 **Checkpoint**: Foundation ready — user story implementation can now begin.
 

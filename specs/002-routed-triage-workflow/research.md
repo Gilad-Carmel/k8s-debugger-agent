@@ -70,11 +70,13 @@ This document captures the technology decisions made during Phase 0. There are *
   retries). The eval suite (T056–T060) gates on json-parse success rate ≥ 99%
   before merge.
 
-## R3. State persistence — Postgres in prod, SQLite in dev/CI
+## R3. State persistence — SQLite (all environments)
 
-- **Decision**: Use LangGraph's Postgres checkpointer (`langgraph.checkpoint.postgres`) in production and the SQLite checkpointer in local/CI. The append-only audit table lives in the same database, separate schema.
-- **Rationale**: Postgres gives us atomic writes for `(checkpoint, audit_record)` pairs and durable, queryable audit retention. SQLite keeps `make dev` and CI runs zero-infra. Both back-ends are first-party LangGraph adapters, so no impedance mismatch.
+- **Decision**: Use SQLite (`aiosqlite`, WAL mode) for both LangGraph checkpoints and the append-only audit table in all environments — local development, CI, and production MVP. The LangGraph `AsyncSqliteSaver` adapter is used for checkpointing. The audit table lives in the same `.sqlite3` file.
+- **Rationale**: Postgres was originally planned for production to gain DB-level role enforcement of the append-only invariant and atomic `(checkpoint, audit_record)` writes. For a single-tenant MVP at ~100 incidents/day these guarantees are achievable at the application layer at a fraction of the operational cost: `audit.py` is the sole writer, a unit test asserts no UPDATE/DELETE SQL exists in any module that touches `audit_record`, and SQLite WAL provides crash-safe sequential writes. Removing Postgres eliminates a compose service, `asyncpg` and `sqlalchemy` dependencies, `libpq-dev` from Docker images, and the Postgres CI service blocks — meaningfully reducing both image size and CI complexity. Migration to Postgres is straightforward if we outgrow single-instance SQLite.
+- **Append-only enforcement**: Application-layer only. `audit.py` is the sole caller of INSERT on `audit_record`. A dedicated unit test (`tests/unit/test_audit_record.py`) asserts that no other source file contains `UPDATE` or `DELETE` SQL targeting `audit_record`.
 - **Alternatives considered**:
+  - Postgres — rejected for MVP: operational overhead (extra compose service, `asyncpg`/`libpq` build deps, CI postgres container) outweighs the benefit when single-tenant ~100 incidents/day fits comfortably in SQLite WAL; revisit at multi-tenant or high-availability scale.
   - Redis checkpointer — rejected: ephemeral by default; durability work would offset the perf benefit, and we don't need sub-ms checkpoint reads.
   - File-based checkpointer — rejected: doesn't scale beyond a single instance and gives weak audit guarantees.
 
@@ -165,9 +167,7 @@ Each new runtime dependency below was evaluated for (a) OSI-approved license, (b
 | `pydantic` v2 | MIT | Active | Required for structured-output / Settings. |
 | `langchain-openai` | MIT | Active (LangChain org) | `ChatOpenAI` wrapper for local OpenAI-compatible inference; `.with_structured_output()` used for Router/Expert nodes. Two-reviewer rule applies (model dependency). |
 | `openai` | MIT | Active (OpenAI) | Transitive dep of `langchain-openai`; also used directly in `llm.py` for low-level retry logic. Two-reviewer rule applies (model dependency). |
-| `sqlalchemy` 2.x | MIT | Active | Used for the audit table and as the substrate for both checkpointer back-ends. |
-| `asyncpg` | Apache-2.0 | Active | Postgres driver (prod). |
-| `aiosqlite` | MIT | Active | SQLite driver (dev/CI). |
+| `aiosqlite` | MIT | Active | SQLite async driver (all environments). |
 | `structlog` | Apache-2.0 / MIT | Active | Structured logging with contextvars. |
 | `opentelemetry-api` / `opentelemetry-sdk` | Apache-2.0 | Active (CNCF) | Spans on node entry/exit + MCP tool calls per Principle IX. |
 | `respx` (test only) | BSD-3-Clause | Active | HTTPX mock for contract tests. |
@@ -183,7 +183,7 @@ Two-reviewer rule (Principle VI / Governance) applies to any PR that adds, remov
 |---|---|
 | Workflow framework | R1 (LangGraph) |
 | Model selection per stage | R2 (local OpenAI-compatible endpoint via `langchain-openai`; single `LLM_MODEL` env var; Router uses fast sampling, Experts use full context; no LLM in Solver) |
-| State persistence | R3 (Postgres prod / SQLite dev, shared with audit) |
+| State persistence | R3 (SQLite all environments; application-layer append-only enforcement) |
 | Webhook framework | R4 (FastAPI + HMAC) |
 | MCP framing | R5 (official SDK, separate process, per-tool SAs) |
 | Mock Slack | R6 (local FastAPI receiver matching Block Kit shape) |

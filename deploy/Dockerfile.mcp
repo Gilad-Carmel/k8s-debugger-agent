@@ -1,0 +1,31 @@
+# deploy/Dockerfile.mcp
+#
+# MCP server: separate process exposing Kubernetes read + scoped-write tools.
+#
+# NOTE: src/mcp_server/server.py currently only implements the stdio MCP
+# transport (HTTP/SSE is a TODO). This image still builds and can be used
+# by anything that spawns it as a subprocess and talks over stdin/stdout.
+# The compose stack does NOT run this as a long-lived HTTP service yet --
+# it will be re-enabled once http transport lands.
+#
+# Memory budget: <= 256 MiB RSS (plan.md Constraints, Principle IX)
+# Entry point   : python -m src.mcp_server  (src/mcp_server/__main__.py)
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    MCP_SA_TOKEN_DIR=/run/secrets/mcp-sa \
+    MCP_TRANSPORT=stdio
+
+RUN pip install --no-cache-dir uv==0.6.14
+
+# hatchling needs the src/ tree present to build the wheel.
+COPY pyproject.toml ./
+COPY src/ src/
+
+RUN uv pip install --system --no-cache .
+
+CMD ["python", "-m", "src.mcp_server"]

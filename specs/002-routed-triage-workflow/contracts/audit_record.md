@@ -4,7 +4,7 @@
 **Owner**: `src/agent/audit.py` + the MCP server's audit writer
 **Spec refs**: FR-008, FR-009, FR-022, FR-028, SC-005, SC-006, SC-009
 
-The audit log is the platform's primary "what happened, why, how to undo it" record. It is **append-only** at the application layer; database-level revoke statements prevent UPDATE/DELETE. Joined by `correlation_id` to reconstruct an Incident end-to-end.
+The audit log is the platform's primary "what happened, why, how to undo it" record. It is **append-only** at the application layer; `audit.py` is the sole writer and no UPDATE/DELETE SQL targeting `audit_record` exists anywhere in the codebase (enforced by a unit test in `tests/unit/test_audit_record.py`). Joined by `correlation_id` to reconstruct an Incident end-to-end.
 
 ---
 
@@ -12,34 +12,29 @@ The audit log is the platform's primary "what happened, why, how to undo it" rec
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | `bigserial PRIMARY KEY` | DB-assigned. |
-| `correlation_id` | `text NOT NULL` | Indexed. Joins all rows for one Incident. |
-| `sequence_no` | `int NOT NULL` | Monotonic within `correlation_id`. `(correlation_id, sequence_no)` is UNIQUE. |
-| `stage` | `text NOT NULL` | One of the `Stage` enum values below. |
-| `outcome` | `text NOT NULL` | One of `ok` / `refused` / `error` / `partial`. |
-| `actor` | `jsonb NOT NULL` | `{type: "system"|"user"|"mcp_tool", id: "...", roles?: [...]}`. |
-| `prompt` | `text` | LLM stages only. Already-redacted. NULL otherwise. |
-| `response` | `text` | LLM stages only. NULL otherwise. |
-| `model` | `text` | LLM stages only. |
-| `tokens_in` | `int` | LLM stages only. |
-| `tokens_out` | `int` | LLM stages only. |
-| `cost_usd_micros` | `bigint` | LLM stages only. Cost in micro-USD (10⁻⁶) to avoid float drift. |
-| `payload` | `jsonb NOT NULL` | Stage-specific structured detail (see below). |
-| `redactions_applied` | `jsonb NOT NULL` | `[{pattern_id: "...", count: N}, ...]`. Empty array if none. |
-| `at` | `timestamptz NOT NULL DEFAULT now()` | ISO-8601 when serialized. |
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | DB-assigned. |
+| `correlation_id` | `TEXT NOT NULL` | Indexed. Joins all rows for one Incident. |
+| `sequence_no` | `INTEGER NOT NULL` | Monotonic within `correlation_id`. `(correlation_id, sequence_no)` is UNIQUE. |
+| `stage` | `TEXT NOT NULL` | One of the `Stage` enum values below. |
+| `outcome` | `TEXT NOT NULL` | One of `ok` / `refused` / `error` / `partial`. |
+| `actor` | `TEXT NOT NULL` | JSON string: `{type: "system"|"user"|"mcp_tool", id: "...", roles?: [...]}`. |
+| `prompt` | `TEXT` | LLM stages only. Already-redacted. NULL otherwise. |
+| `response` | `TEXT` | LLM stages only. NULL otherwise. |
+| `model` | `TEXT` | LLM stages only. |
+| `tokens_in` | `INTEGER` | LLM stages only. |
+| `tokens_out` | `INTEGER` | LLM stages only. |
+| `cost_usd_micros` | `INTEGER` | LLM stages only. Cost in micro-USD (10⁻⁶) to avoid float drift. |
+| `payload` | `TEXT NOT NULL` | JSON string; stage-specific structured detail (see below). |
+| `redactions_applied` | `TEXT NOT NULL` | JSON array string: `[{pattern_id: "...", count: N}, ...]`. Empty array if none. |
+| `at` | `TEXT NOT NULL` | ISO-8601 UTC timestamp (`DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`). |
 
 Indexes:
 
 - `(correlation_id, sequence_no)` UNIQUE
 - `(at)` for time-range scans
-- `(stage)` for stage-specific dashboards
-- `gin(payload)` for ad-hoc queries
+- `(stage)` for stage-specific queries
 
-Permissions:
-
-- The `agent` and `mcp_server` DB roles have `INSERT` only.
-- `UPDATE`, `DELETE`, `TRUNCATE` are revoked at the table level.
-- A separate `audit_reader` role has `SELECT` for support tooling.
+Note: SQLite does not support `jsonb` or GIN indexes. `actor`, `payload`, and `redactions_applied` are stored as JSON strings; callers parse via `json.loads()`. Ad-hoc payload queries use SQLite's `json_extract()` function.
 
 ---
 
