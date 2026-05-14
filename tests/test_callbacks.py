@@ -24,23 +24,24 @@ async def _open_pending_incident(
 
 
 async def test_approve_happy_path(
-    client: httpx.AsyncClient,
+    app_and_client,
     alertmanager_payload,
     sign_alertmanager,
     sign_slack,
     callback_payload,
 ) -> None:
+    from tests.conftest import graph_state
+
+    app, client = app_and_client
     cid = await _open_pending_incident(client, alertmanager_payload, sign_alertmanager)
     r = await fire_callback(client, "approve", callback_payload(correlation_id=cid), sign_slack)
     assert r.status_code == 200
     assert r.json() == {"correlation_id": cid, "status": "approved"}
 
-    # Wait for the resumed graph to run the solver placeholder.
+    # Wait for the resumed graph to run the solver.
     await asyncio.sleep(1.5)
     chain = await fetch_chain(cid)
-    stages = [r["stage"] for r in chain]
-    assert "approval_event" in stages
-    assert "solver_placeholder" in stages
+    assert "approval_event" in [r["stage"] for r in chain]
 
     # incidents.status flipped to approved.
     async with get_conn() as conn:
@@ -50,14 +51,21 @@ async def test_approve_happy_path(
         row = await cur.fetchone()
         assert row["status"] == "approved"
 
+    # Graph resumed past the interrupt and ran the Solver — `solver_run` is set.
+    state = await graph_state(app, cid)
+    assert "solver_run" in state, f"solver did not run; state keys: {list(state)}"
+
 
 async def test_reject_does_not_invoke_solver(
-    client: httpx.AsyncClient,
+    app_and_client,
     alertmanager_payload,
     sign_alertmanager,
     sign_slack,
     callback_payload,
 ) -> None:
+    from tests.conftest import graph_state
+
+    app, client = app_and_client
     cid = await _open_pending_incident(client, alertmanager_payload, sign_alertmanager)
     r = await fire_callback(client, "reject", callback_payload(correlation_id=cid), sign_slack)
     assert r.status_code == 200
@@ -65,10 +73,11 @@ async def test_reject_does_not_invoke_solver(
 
     await asyncio.sleep(1.5)
     chain = await fetch_chain(cid)
-    stages = [r["stage"] for r in chain]
-    assert "approval_event" in stages
-    # Critical safety invariant: rejection MUST NOT trigger the solver.
-    assert "solver_placeholder" not in stages
+    assert "approval_event" in [r["stage"] for r in chain]
+
+    # CRITICAL SAFETY INVARIANT: rejection MUST NOT trigger the Solver.
+    state = await graph_state(app, cid)
+    assert "solver_run" not in state, "solver ran on a rejected incident — UNSAFE"
 
     async with get_conn() as conn:
         cur = await conn.execute(

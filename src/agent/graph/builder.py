@@ -1,83 +1,85 @@
 """
 src/agent/graph/builder.py
 
-LangGraph wiring. Returns a compiled graph that Person 3 owns end-to-end.
-Person 1 swaps in real node bodies in src/agent/graph/nodes/_placeholders.py
-without touching this file (signatures + state contract are stable).
+LangGraph wiring for the routed triage-and-remediation workflow.
 
 Topology:
 
     START
-      ↓
+      |
     ingest
-      ↓
+      |
     router
-      ↓ (conditional on classification)
-    {application_expert | network_expert | database_expert | <skip>}
-      ↓
+      | (conditional on routing.domain via route_after_router)
+    {application_expert | network_expert | database_expert | reporter}
+      |
     reporter
-      ↓
-    [INTERRUPT BEFORE solver]   ← HITL gate; resumes when callbacks.py
-                                  sets approval_status and re-invokes graph
-      ↓ (conditional on approval_status)
+      |
+    [INTERRUPT BEFORE solver]   <-- HITL gate; resumes when callbacks.py
+                                    sets approval_status and re-invokes graph
+      | (conditional on approval_status)
     {solver | END}
-      ↓
+      |
     END
 
-Conditional edges use only `classification` (after router) and
-`approval_status` (after reporter) — no other branching keys.
+Conditional edges use exactly two discriminants — `routing.domain` after
+the router, and `approval_status` after the reporter. Anything other than
+'APPROVED' on the post-interrupt edge terminates the run without invoking
+the Solver (FR-015 safety invariant).
 """
+
 from __future__ import annotations
+
+from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
-from src.agent.graph.nodes import _placeholders as nodes
+from src.agent.graph.nodes.experts.application import application_expert_node
+from src.agent.graph.nodes.experts.database import database_expert_node
+from src.agent.graph.nodes.experts.network import network_expert_node
+from src.agent.graph.nodes.ingest import ingest_node
+from src.agent.graph.nodes.reporter import reporter_node
+from src.agent.graph.nodes.router import route_after_router, router_node
+from src.agent.graph.nodes.solver import solver_node
 from src.agent.graph.state import WorkflowState
 
 
-def _route_by_classification(state: WorkflowState) -> str:
-    classification = state.get("classification", "UNKNOWN")
-    if classification == "APP":
-        return "application_expert"
-    if classification == "NET":
-        return "network_expert"
-    if classification == "DB":
-        return "database_expert"
-    # UNKNOWN short-circuits past Experts straight to Reporter.
-    return "reporter"
-
-
-def _route_by_approval(state: WorkflowState) -> str:
+def _route_after_reporter(state: WorkflowState) -> str:
+    """Post-interrupt edge: only APPROVED proceeds to the Solver."""
     if state.get("approval_status") == "APPROVED":
         return "solver"
-    # REJECTED, EXPIRED, or anything else terminates without mutation.
+    # REJECTED, EXPIRED, missing — terminate without mutation.
     return END
 
 
-def build_graph(checkpointer: BaseCheckpointSaver) -> "CompiledStateGraph":  # type: ignore[name-defined]
+def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> Any:
     """
-    Build and compile the workflow graph with the supplied checkpointer.
+    Assemble and compile the StateGraph.
 
-    The checkpointer makes the graph resumable across the HITL interrupt:
-    callbacks.py uses the same correlation_id as `thread_id` to wake the
-    paused run.
+    The optional `checkpointer` enables interrupt + resume across the
+    HITL gate; when omitted the graph still compiles for unit-style
+    end-to-end runs but cannot be resumed across process restarts.
     """
-    g: StateGraph = StateGraph(WorkflowState)
+    builder = StateGraph(WorkflowState)
 
-    g.add_node("ingest", nodes.ingest_node)
-    g.add_node("router", nodes.router_node)
-    g.add_node("application_expert", nodes.application_expert_node)
-    g.add_node("network_expert", nodes.network_expert_node)
-    g.add_node("database_expert", nodes.database_expert_node)
-    g.add_node("reporter", nodes.reporter_node)
-    g.add_node("solver", nodes.solver_node)
+    # Nodes
+    builder.add_node("ingest", ingest_node)
+    builder.add_node("router", router_node)
+    builder.add_node("application_expert", application_expert_node)
+    builder.add_node("network_expert", network_expert_node)
+    builder.add_node("database_expert", database_expert_node)
+    builder.add_node("reporter", reporter_node)
+    builder.add_node("solver", solver_node)
 
-    g.add_edge(START, "ingest")
-    g.add_edge("ingest", "router")
-    g.add_conditional_edges(
+    # Linear entry
+    builder.add_edge(START, "ingest")
+    builder.add_edge("ingest", "router")
+
+    # Router -> one of four (Unknown short-circuits past Experts to Reporter).
+    builder.add_conditional_edges(
         "router",
-        _route_by_classification,
+        route_after_router,
         {
             "application_expert": "application_expert",
             "network_expert": "network_expert",
@@ -85,18 +87,25 @@ def build_graph(checkpointer: BaseCheckpointSaver) -> "CompiledStateGraph":  # t
             "reporter": "reporter",
         },
     )
-    g.add_edge("application_expert", "reporter")
-    g.add_edge("network_expert", "reporter")
-    g.add_edge("database_expert", "reporter")
-    # After Reporter we PAUSE for HITL approval. Resume happens in callbacks.py.
-    g.add_conditional_edges(
+
+    # Experts converge on Reporter
+    builder.add_edge("application_expert", "reporter")
+    builder.add_edge("network_expert", "reporter")
+    builder.add_edge("database_expert", "reporter")
+
+    # HITL gate. The graph PAUSES at interrupt_before=['solver'] until
+    # callbacks.py re-invokes it after the human approves/rejects.
+    builder.add_conditional_edges(
         "reporter",
-        _route_by_approval,
+        _route_after_reporter,
         {
             "solver": "solver",
             END: END,
         },
     )
-    g.add_edge("solver", END)
+    builder.add_edge("solver", END)
 
-    return g.compile(checkpointer=checkpointer, interrupt_before=["solver"])
+    compile_kwargs: dict[str, Any] = {"interrupt_before": ["solver"]}
+    if checkpointer is not None:
+        compile_kwargs["checkpointer"] = checkpointer
+    return builder.compile(**compile_kwargs)

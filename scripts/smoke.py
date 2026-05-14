@@ -128,20 +128,13 @@ async def main() -> int:
         )
 
     stages = [r["stage"] for r in chain]
-    expected = {
-        "webhook_received",
-        "ingest_placeholder",
-        "router_placeholder",
-        "application_expert_placeholder",
-        "reporter_placeholder",
-        "approval_event",
-        "solver_placeholder",
-    }
+    expected = {"webhook_received", "approval_event"}
     missing = expected - set(stages)
     if missing:
-        print(f"\n[smoke] FAIL -- missing stages: {missing}")
+        print(f"\n[smoke] FAIL -- missing audit stages: {missing}")
         return 1
-    print("\n[smoke] OK -- full pipeline exercised end-to-end.")
+    print("\n[smoke] OK -- webhook + HITL audit chain present.")
+    print("       (solver verification now belongs in pytest via aget_state)")
     return 0
 
 

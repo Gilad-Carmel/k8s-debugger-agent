@@ -1,28 +1,71 @@
 """
 src/shared/correlation.py
 
-correlation_id generation + contextvar propagation for structured logging.
+Correlation-ID generation + contextvars propagation.
 
-Hackathon simplification: uuid4().hex instead of UUIDv7 to avoid an extra dep.
+Two API surfaces are exported, both backed by the same ContextVar:
+
+  - Canonical (per tasks.md T014):
+      generate_correlation_id() -> str
+      set_correlation_id(cid: str) -> None
+      get_correlation_id() -> str
+
+  - Short aliases used by the Person 3 webhook/callback layer:
+      new_correlation_id() -> str   (alias for generate_correlation_id)
+      bind(cid: str) -> None        (alias for set_correlation_id)
+      get() -> str                  (alias for get_correlation_id)
+
+The spec calls for UUIDv7 (time-ordered) strings; Python stdlib only ships
+uuid1-5. We use uuid4 for the MVP since ordering by correlation_id is never
+required — the audit table has its own monotonic sequence_no per row.
+
+Note: previous Person-3 builds used uuid4().hex (32 chars, no dashes).
+This module now returns str(uuid4()) (36 chars with dashes) to align with
+the team's canonical contract. Callers that compared length must update.
 """
 from __future__ import annotations
 
 import uuid
 from contextvars import ContextVar
 
-correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="")
+# Single ContextVar backs both API surfaces.
+_correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="")
+
+# Public name for code that wants to read the var directly.
+correlation_id_var = _correlation_id_var
 
 
+# ---------------------------------------------------------------------------
+# Canonical API (preferred for new code)
+# ---------------------------------------------------------------------------
+def generate_correlation_id() -> str:
+    """Return a fresh UUID4 string (36 chars, with dashes)."""
+    return str(uuid.uuid4())
+
+
+def set_correlation_id(cid: str) -> None:
+    """Bind *cid* to the current async context."""
+    _correlation_id_var.set(cid)
+
+
+def get_correlation_id() -> str:
+    """Return the bound correlation_id, or '' if unset."""
+    return _correlation_id_var.get()
+
+
+# ---------------------------------------------------------------------------
+# Short aliases (kept for the Person 3 webhook + callbacks layer)
+# ---------------------------------------------------------------------------
 def new_correlation_id() -> str:
-    """Generate a fresh correlation_id (hex, no dashes)."""
-    return uuid.uuid4().hex
+    """Alias for generate_correlation_id()."""
+    return generate_correlation_id()
 
 
-def bind(correlation_id: str) -> None:
-    """Bind a correlation_id to the current async context."""
-    correlation_id_var.set(correlation_id)
+def bind(cid: str) -> None:
+    """Alias for set_correlation_id(cid)."""
+    set_correlation_id(cid)
 
 
 def get() -> str:
-    """Return the bound correlation_id, or empty string if none."""
-    return correlation_id_var.get()
+    """Alias for get_correlation_id()."""
+    return get_correlation_id()

@@ -18,25 +18,31 @@ async def test_health(client: httpx.AsyncClient) -> None:
 
 
 async def test_webhook_happy_path(
-    client: httpx.AsyncClient, alertmanager_payload, sign_alertmanager
+    app_and_client, alertmanager_payload, sign_alertmanager
 ) -> None:
+    from tests.conftest import graph_state
+
+    app, client = app_and_client
     r = await fire_webhook(client, alertmanager_payload(), sign_alertmanager)
     assert r.status_code == 202
     body = r.json()
     assert body["deduplicated"] is False
-    assert len(body["correlation_id"]) == 32  # uuid4 hex
+    # uuid4 with dashes — see src/shared/correlation.py canonical API.
+    assert len(body["correlation_id"]) == 36
 
-    # Let the placeholder graph drain to the interrupt before solver.
+    # Let the graph drain to the interrupt before solver.
     await asyncio.sleep(1.0)
 
-    # Audit row was written under that correlation_id.
+    # Audit row was written by my webhook handler.
     chain = await fetch_chain(body["correlation_id"])
     stages = [r["stage"] for r in chain]
     assert stages[0] == "webhook_received"
-    assert "ingest_placeholder" in stages
-    assert "reporter_placeholder" in stages
-    # Solver MUST NOT run before approval — interrupt holds.
-    assert "solver_placeholder" not in stages
+
+    # Graph paused at interrupt_before=['solver'] — Reporter ran (state has
+    # `report`), but Solver did NOT (no `solver_run` yet).
+    state = await graph_state(app, body["correlation_id"])
+    assert "report" in state, f"expected report in state, got keys: {list(state)}"
+    assert "solver_run" not in state, "solver MUST NOT run before approval"
 
 
 async def test_webhook_bad_signature_rejected(

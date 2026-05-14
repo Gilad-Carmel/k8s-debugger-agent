@@ -1,35 +1,112 @@
 """
 src/agent/graph/state.py
 
-WorkflowState — the LangGraph shared-state contract.
+WorkflowState TypedDict — the shared state object passed between every
+LangGraph node in the triage-and-remediation graph.
 
-Per spec.md §"Shared Workflow State" and data-model.md §WorkflowState.
-LangGraph merges per-node updates shallowly by key, so every entry must be
-a top-level key.
+Corresponds to data-model.md §WorkflowState and tasks.md T025.
+Depends on src/shared/schemas.py (T016) and src/shared/labels.py (T012).
 
-Person 1 may add additional bookkeeping keys (budget counters, retry attempts);
-they MUST NOT remove or repurpose any field below. Other people read these
-fields and downstream consumers depend on them.
+Design notes:
+  - TypedDict (not BaseModel) because LangGraph's StateGraph expects a plain
+    dict-compatible type for its internal checkpointer serialisation.
+  - total=False so every field is optional — LangGraph nodes only set the
+    keys they are responsible for; prior keys remain untouched.
+  - Invariants (enforced in unit tests, per Principle VII):
+      * Once report is set, report.proposed_fix.fingerprint is immutable.
+      * approval.correlation_id MUST equal correlation_id.
+      * solver_run.proposed_fix_fingerprint MUST equal
+        report.proposed_fix.fingerprint.
+      * budget_remaining_tokens and budget_remaining_usd_micros are
+        monotonically non-increasing.
 """
+
 from __future__ import annotations
 
-from typing import Any, Optional, TypedDict
+from typing import TypedDict
+
+from src.shared.schemas import (
+    ApprovalEvent,
+    CorrelationId,
+    FilteredEvidence,
+    Incident,
+    Report,
+    RoutingDecision,
+    ExpertDiagnosis,
+    SolverRun,
+)
 
 
 class WorkflowState(TypedDict, total=False):
-    correlation_id: str
-    # Raw alert payload preserved verbatim (after HMAC + dedup) for replay.
-    alert_payload: dict[str, Any]
-    # Pre-filtered cluster signal — set by Ingest from MCP read tools.
-    evidence: dict[str, Any]
-    # Router output. One of: "APP" / "NET" / "DB" / "UNKNOWN".
-    classification: str
-    # Expert root-cause hypothesis + cited evidence list.
-    diagnosis: dict[str, Any]
-    # Frozen catalog-bound fix proposed by the Expert.
-    proposed_fix: Optional[dict[str, Any]]
-    # Set by the HITL callback handler before the graph resumes.
-    # Values: "PENDING" / "APPROVED" / "REJECTED" / "EXPIRED".
+    """
+    Mutable state threaded through every node of the LangGraph workflow.
+
+    Key lifecycle:
+      Ingest  → sets: correlation_id, incident, filtered_evidence
+      Router  → sets: routing
+      Expert  → sets: diagnosis
+      Reporter→ sets: report
+      (interrupt — awaits approval callback)
+      Solver  → sets: solver_run
+      budget fields decremented at every LLM call site
+    """
+
+    # ------------------------------------------------------------------
+    # Identity — set once in Ingest, never overwritten (data-model §WorkflowState)
+    # ------------------------------------------------------------------
+    correlation_id: CorrelationId
+
+    # ------------------------------------------------------------------
+    # Ingest outputs
+    # ------------------------------------------------------------------
+    incident: Incident
+    filtered_evidence: FilteredEvidence
+
+    # ------------------------------------------------------------------
+    # Router output
+    # ------------------------------------------------------------------
+    routing: RoutingDecision
+
+    # ------------------------------------------------------------------
+    # Expert output  (None when routing.domain == "Unknown")
+    # ------------------------------------------------------------------
+    diagnosis: ExpertDiagnosis
+
+    # ------------------------------------------------------------------
+    # Reporter output  (mutated for status transitions by the callback handler)
+    # ------------------------------------------------------------------
+    report: Report
+
+    # ------------------------------------------------------------------
+    # Approval — hydrated by the /callbacks/slack/approve|reject handler
+    # after the LangGraph interrupt resumes
+    # ------------------------------------------------------------------
+    approval: ApprovalEvent
+
+    # ------------------------------------------------------------------
+    # Solver output  (set only when approval.role_check_passed == True and
+    # approval.action == "approve")
+    # ------------------------------------------------------------------
+    solver_run: SolverRun
+
+    # ------------------------------------------------------------------
+    # Budget tracking — decremented by src/agent/budget.py at every LLM call
+    # (spec FR-029; fail-closed when either reaches 0)
+    # ------------------------------------------------------------------
+    budget_remaining_tokens: int
+    budget_remaining_usd_micros: int
+
+    # ------------------------------------------------------------------
+    # HITL routing discriminant set by the /callbacks/slack/* handler
+    # (or by the expiry watcher) immediately before the graph resumes
+    # from interrupt_before=['solver']. Values: 'APPROVED' | 'REJECTED'
+    # | 'EXPIRED'. The post-interrupt conditional edge keys on this and
+    # this only — when REJECTED or EXPIRED the graph terminates without
+    # invoking the Solver. See builder.py and api/callbacks.py.
+    # ------------------------------------------------------------------
     approval_status: str
-    # Result of the deterministic Solver execution.
-    solver_result: dict[str, Any]
+
+    # Raw Alertmanager body, preserved verbatim after HMAC verify + dedup
+    # so the full triage can be replayed from audit. Set by Ingest (or
+    # by the webhook handler when it kicks the graph off).
+    alert_payload: dict

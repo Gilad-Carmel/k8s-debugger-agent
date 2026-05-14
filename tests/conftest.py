@@ -31,15 +31,28 @@ def fresh_db(tmp_path: Path) -> Path:
 
 
 @pytest_asyncio.fixture
-async def client(fresh_db: Path) -> AsyncIterator[httpx.AsyncClient]:
-    """Boot the FastAPI app with a real lifespan + a real graph + checkpointer."""
+async def app_and_client(fresh_db: Path) -> AsyncIterator[tuple[Any, httpx.AsyncClient]]:
+    """Yield (app, client) so tests that need app.state.graph can grab it."""
     from src.agent.api import create_app
 
     app = create_app()
     async with LifespanManager(app) as manager:
         transport = httpx.ASGITransport(app=manager.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-            yield c
+            yield app, c
+
+
+@pytest_asyncio.fixture
+async def client(app_and_client) -> AsyncIterator[httpx.AsyncClient]:
+    """Most tests only need the client."""
+    yield app_and_client[1]
+
+
+async def graph_state(app, correlation_id: str) -> dict:
+    """Return the LangGraph state values for a given correlation_id thread."""
+    config = {"configurable": {"thread_id": correlation_id}}
+    snapshot = await app.state.graph.aget_state(config)
+    return dict(snapshot.values) if snapshot else {}
 
 
 def _sign(secret: str, body: bytes) -> str:

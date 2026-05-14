@@ -55,16 +55,20 @@ async def test_expiry_sweep_transitions_pending_to_expired(
             await _expire_one(app.state.graph, cid)
             await asyncio.sleep(1.0)
 
-    async with get_conn() as conn:
-        cur = await conn.execute(
-            "SELECT status FROM incidents WHERE correlation_id = ?", (cid,)
-        )
-        assert (await cur.fetchone())["status"] == "expired"
+            async with get_conn() as conn:
+                cur = await conn.execute(
+                    "SELECT status FROM incidents WHERE correlation_id = ?", (cid,)
+                )
+                assert (await cur.fetchone())["status"] == "expired"
+
+            # CRITICAL: Solver MUST NOT have run on an expired incident.
+            config = {"configurable": {"thread_id": cid}}
+            snap = await app.state.graph.aget_state(config)
+            assert "solver_run" not in (snap.values if snap else {}), (
+                "solver ran on an expired incident — UNSAFE"
+            )
 
     chain = await fetch_chain(cid)
-    stages = [r["stage"] for r in chain]
-    # Solver MUST NOT have run on an expired incident.
-    assert "solver_placeholder" not in stages
     # The sweeper recorded the expiry as a refused approval_event.
     expired_audits = [
         r for r in chain
@@ -98,9 +102,10 @@ async def test_checkpoint_replay_across_app_restarts(
             cid = r.json()["correlation_id"]
             await asyncio.sleep(1.0)
 
-            # Pre-restart sanity: solver hasn't run.
-            chain_before = await fetch_chain(cid)
-            assert "solver_placeholder" not in [r["stage"] for r in chain_before]
+            # Pre-restart sanity: solver hasn't run yet (interrupt holds).
+            cfg = {"configurable": {"thread_id": cid}}
+            snap = await app1.state.graph.aget_state(cfg)
+            assert "solver_run" not in (snap.values if snap else {})
 
     # App #1 fully torn down here. The sqlite file persists.
     assert Path(settings.SQLITE_PATH).exists()
@@ -117,10 +122,16 @@ async def test_checkpoint_replay_across_app_restarts(
             assert r.json()["status"] == "approved"
             await asyncio.sleep(1.5)
 
+            # The graph resumed from the SQLite-persisted checkpoint and
+            # ran the Solver in app #2 — solver_run is now in state.
+            cfg = {"configurable": {"thread_id": cid}}
+            snap = await app2.state.graph.aget_state(cfg)
+            assert "solver_run" in (snap.values if snap else {}), (
+                "graph did not resume across the app restart"
+            )
+
+            # The audit_log carried across (it's the same SQLite file).
             chain_after = await fetch_chain(cid)
             stages = [r["stage"] for r in chain_after]
-            # The graph resumed from checkpoint and ran solver in app #2.
-            assert "solver_placeholder" in stages
-            # And we still have all the rows from app #1 — same audit_log.
-            assert "webhook_received" in stages
-            assert "reporter_placeholder" in stages
+            assert "webhook_received" in stages   # written in app #1
+            assert "approval_event" in stages     # written in app #2
