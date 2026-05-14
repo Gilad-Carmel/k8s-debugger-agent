@@ -5,8 +5,8 @@ at `specs/002-routed-triage-workflow/plan.md` and its sibling artifacts:
 
 - `specs/002-routed-triage-workflow/spec.md` — the feature specification.
 - `specs/002-routed-triage-workflow/research.md` — Phase 0 stack decisions
-  (LangGraph, Anthropic model tiering, Postgres/SQLite persistence,
-  FastAPI webhook, MCP Python SDK, mock Slack receiver, double-pass
+  (LangGraph, local OpenAI-compatible LLM via langchain-openai, Postgres/SQLite
+  persistence, FastAPI webhook, MCP Python SDK, mock Slack receiver, double-pass
   redaction).
 - `specs/002-routed-triage-workflow/data-model.md` — pydantic entities and
   Report status state machine.

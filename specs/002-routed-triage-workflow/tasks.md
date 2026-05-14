@@ -36,13 +36,13 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 **Purpose**: Repo skeleton, language toolchain, lint/type/test runners, container build, dev compose stack.
 
 - [ ] T001 Create repo source layout: `src/agent/{api,graph/nodes/experts}`, `src/mcp_server/tools`, `src/shared`, `tests/{contract,integration,eval,unit,perf,fixtures}`, `deploy/{slack_mock,k8s,sql}` per plan.md §Project Structure
-- [ ] T002 Initialize Python 3.11 project in `pyproject.toml` with runtime deps from research.md §R13 (langgraph≥0.2, langchain-core, mcp, kubernetes, fastapi, uvicorn, pydantic v2, anthropic, sqlalchemy, asyncpg, aiosqlite, structlog, opentelemetry-api/sdk) and dev deps (pytest, pytest-asyncio, respx, deepeval, ruff, black, mypy)
+- [ ] T002 Initialize Python 3.11 project in `pyproject.toml` with runtime deps from research.md §R13 (langgraph≥0.2, langchain-core, langchain-openai, openai, mcp, kubernetes, fastapi, uvicorn, pydantic v2, sqlalchemy, asyncpg, aiosqlite, structlog, opentelemetry-api/sdk) and dev deps (pytest, pytest-asyncio, respx, deepeval, ruff, black, mypy)
 - [ ] T003 [P] Configure `ruff` (with `C901` cyclomatic-cap 15 per Principle VI) and `black` in `pyproject.toml`
 - [ ] T004 [P] Configure `mypy --strict` in `pyproject.toml` with per-package overrides for `tests/`
 - [ ] T005 [P] Configure `pytest` + `pytest-asyncio` + coverage gates in `pyproject.toml` (per-module floors from plan.md Principle VII)
 - [ ] T006 [P] CI workflow at `.github/workflows/ci.yml` running lint, mypy, unit, contract, integration, eval, hallucination, perf, audit-completeness; coverage gates enforced
 - [ ] T007 [P] Create `Makefile` with targets `dev`, `test`, `test-unit`, `eval`, `perf`, `audit`, `audit-check`, `smoke`, `clean` per quickstart.md §Running the test suite
-- [ ] T008 [P] Dev env template at `deploy/dev.env` (`ANTHROPIC_API_KEY`, `ALERTMANAGER_HMAC_SECRET`, `SLACK_MOCK_SECRET`, `LLM_ROUTER_MODEL`, `LLM_EXPERT_MODEL`, `BUDGET_USD_MICROS_PER_INCIDENT`)
+- [ ] T008 [P] Dev env template at `deploy/dev.env` (`LLM_BASE_URL`, `LLM_MODEL`, `LLM_ROUTER_MODEL`, `LLM_EXPERT_MODEL`, `LLM_API_KEY`, `ALERTMANAGER_HMAC_SECRET`, `SLACK_MOCK_SECRET`, `BUDGET_TOKENS_PER_INCIDENT`)
 - [ ] T009 [P] Dockerfile for the agent service at `deploy/Dockerfile.agent`
 - [ ] T010 [P] Dockerfile for the MCP server at `deploy/Dockerfile.mcp`
 - [ ] T011 docker-compose stack at `deploy/docker-compose.yml` (agent, mcp-server, slack-mock, postgres, kind init container, fixture loader)
@@ -67,7 +67,7 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 
 ### Agent core infra
 
-- [ ] T017 [P] Pydantic Settings (env-driven config: LLM model IDs, budget ceilings, approval window, dedup window, redaction patterns) in `src/agent/settings.py`
+- [x] T017 [P] Pydantic Settings (env-driven config: LLM model IDs, budget ceilings, approval window, dedup window, redaction patterns) in `src/agent/settings.py`
 - [ ] T018 [P] Structured logging configuration bound to correlation contextvar in `src/agent/logging_config.py` (structlog)
 - [ ] T019 [P] OpenTelemetry tracer + node-entry/exit + MCP-call span helpers in `src/agent/telemetry.py` (Principle IX)
 - [x] T020 [P] Double-pass regex redaction (boundary + pre-LLM) in `src/agent/redaction.py` per research.md §R7 (bearer/AWS/GCP/Azure/SA-token/JWT/DB-conn-string patterns); 95% coverage tier
@@ -77,7 +77,7 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 - [ ] T024 Append-only audit writer (one row per stage, sequence_no monotonic per correlation_id) in `src/agent/audit.py` per contracts/audit_record.md (depends on T023)
 - [x] T025 [P] WorkflowState TypedDict in `src/agent/graph/state.py` per data-model.md §WorkflowState (depends on T016)
 - [x] T026 LangGraph builder skeleton + checkpointer wiring (`langgraph.checkpoint.postgres` prod / `langgraph.checkpoint.sqlite` dev) in `src/agent/graph/builder.py` (depends on T023, T025) — nodes registered as no-ops, conditional edges scaffolded
-- [ ] T027 Tiered Anthropic LLM client + structured-output helper (Haiku/Sonnet tiering, model recorded for audit, token+cost accounting hook) in `src/agent/llm.py` per research.md §R2 (depends on T021, T024)
+- [ ] T027 Local-LLM client + structured-output helper (`ChatOpenAI` from `langchain-openai` with configurable `base_url`/`api_key`; router profile: low max_tokens + temp=0; expert profile: full-context + temp=0.2; JSON-mode fallback; model recorded for audit; token accounting hook) in `src/agent/llm.py` per research.md §R2 (depends on T021, T024)
 - [ ] T028 [P] FastAPI app factory + `/health` endpoint in `src/agent/api/health.py` and app wiring in `src/agent/api/__init__.py`
 
 ### MCP server infra
@@ -121,9 +121,9 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 - [x] T043 [P] [US1] MCP read tool `get_pod` (phase, container states, restart counts, resource_version) in `src/mcp_server/tools/get_pod.py`
 - [ ] T044 [US1] Webhook intake `POST /webhook/alertmanager` (HMAC verify constant-time, parse Alertmanager v4 subset, dedup fingerprint via R12, 202 with `correlation_id`) in `src/agent/api/webhook.py` (depends on T016, T024, T028)
 - [ ] T045 [US1] Ingest node: TTFT ack emitted to slack-mock before any LLM call; calls the three MCP read tools concurrently; populates `evidence` on `WorkflowState` in `src/agent/graph/nodes/ingest.py` (depends on T031, T041-T043)
-- [ ] T046 [US1] Router node (Haiku-tier, structured pydantic output: `domain`, `confidence`, `cited_evidence ≥1` unless Unknown, `runners_up`) in `src/agent/graph/nodes/router.py` (FR-005..FR-008; depends on T027)
+- [x] T046 [US1] Router node (fast-sampling profile, structured pydantic output via `.with_structured_output()`: `domain`, `confidence`, `cited_evidence ≥1` unless Unknown, `runners_up`) in `src/agent/graph/nodes/router.py` (FR-005..FR-008; depends on T027)
 - [ ] T047 [US1] Expert base protocol + shared prompt builder in `src/agent/graph/nodes/experts/_base.py`
-- [ ] T048 [P] [US1] Application Expert node in `src/agent/graph/nodes/experts/application.py` (Sonnet-tier; produces `ExpertDiagnosis` with cited evidence + `ProposedFix | None`)
+- [ ] T048 [P] [US1] Application Expert node in `src/agent/graph/nodes/experts/application.py` (full-context profile via `llm.py`; produces `ExpertDiagnosis` with cited evidence + `ProposedFix | None`)
 - [ ] T049 [P] [US1] Network Expert node in `src/agent/graph/nodes/experts/network.py`
 - [ ] T050 [P] [US1] Database Expert node in `src/agent/graph/nodes/experts/database.py`
 - [ ] T051 [US1] Reporter node: assemble `Report`, render Block Kit blocks, POST to slack-mock, set `delivered_at` + `approval_deadline`, persist `report_delivered` audit row in `src/agent/graph/nodes/reporter.py` (FR-013, FR-014; depends on T024)
