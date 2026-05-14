@@ -6,15 +6,17 @@ Smoke-test / demo script for the Phase 2 Router LLM call.
 
 Invokes the graph with a synthetic Alertmanager-style webhook payload
 **and** a fake ``FilteredEvidence`` containing Go panic log lines.
-The router node makes a real Anthropic Haiku LLM call and should classify
-the incident as ``Application`` with at least one ``cited_evidence`` entry.
+The router node makes a real local OpenAI-compatible LLM call (for example via
+Ollama) and should classify the incident as ``Application`` with at least one
+``cited_evidence`` entry.
 
 Usage::
 
     python test_graph_run.py
 
 Requirements:
-  - ``ANTHROPIC_API_KEY`` must be set (env var or .env file at repo root).
+  - ``LLM_BASE_URL`` and ``LLM_ROUTER_MODEL`` must be configured (env var or
+    .env file at repo root).
   - All other nodes (Ingest, Experts, Reporter, Solver) remain stubs.
 """
 
