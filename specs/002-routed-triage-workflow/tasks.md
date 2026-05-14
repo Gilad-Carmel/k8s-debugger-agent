@@ -138,7 +138,7 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 - [ ] T057 [P] [US1] Application expert golden set at `tests/eval/application_expert_golden.jsonl`
 - [ ] T058 [P] [US1] Network expert golden set at `tests/eval/network_expert_golden.jsonl`
 - [ ] T059 [P] [US1] Database expert golden set at `tests/eval/database_expert_golden.jsonl`
-- [ ] T060 [P] [US1] Hallucination test (every Expert claim must quote-match `cited_evidence`) at `tests/eval/hallucination_suite.py` (Principle IV NON-NEGOTIABLE, SC-005)
+- [X] T060 [P] [US1] Hallucination test (every Expert claim must quote-match `cited_evidence`) at `tests/eval/hallucination_suite.py` (Principle IV NON-NEGOTIABLE, SC-005)
 
 ### Integration tests for US1
 
