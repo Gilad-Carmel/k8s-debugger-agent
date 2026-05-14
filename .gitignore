@@ -16,6 +16,9 @@ venv/
 env/
 ENV/
 
+# uv — venv only; uv.lock and .python-version are committed
+# (nothing extra needed here)
+
 # Testing / coverage
 .pytest_cache/
 .coverage
