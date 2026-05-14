@@ -91,9 +91,8 @@ def _sign(body: bytes) -> str:
     return hmac.new(AGENT_SECRET.encode(), body, hashlib.sha256).hexdigest()
 
 
-def _track_background_task(coro: Coroutine[Any, Any, None]) -> None:
+def _track_background_task(coro: Coroutine[Any, Any, None], task_name: str) -> None:
     """Keep a strong reference to a background task until it completes."""
-    task_name = getattr(coro, "__qualname__", "background-task")
     task = asyncio.create_task(coro, name=task_name)
     _background_tasks.add(task)
 
@@ -232,7 +231,7 @@ async def alertmanager_webhook(request: Request) -> dict[str, str]:
 
     correlation_id = labels.get("correlation_id") or str(uuid.uuid4())
 
-    _track_background_task(_run_triage(correlation_id, domain))
+    _track_background_task(_run_triage(correlation_id, domain), f"triage:{correlation_id}:{domain}")
 
     logger.info("accepted alert corr=%s domain=%s", correlation_id, domain)
     return {"status": "accepted", "correlation_id": correlation_id}
@@ -274,7 +273,7 @@ async def approve_callback(request: Request) -> dict[str, str]:
         await _post_to_chat(executed_record)
         _store.pop(correlation_id, None)
 
-    _track_background_task(_solver_task())
+    _track_background_task(_solver_task(), f"solver:{correlation_id}:{domain}")
 
     logger.info("approved corr=%s — solver running", correlation_id)
     return {"status": "ok"}
