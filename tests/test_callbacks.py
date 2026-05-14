@@ -59,6 +59,7 @@ async def test_approve_happy_path(
 
 
 async def test_reject_does_not_invoke_solver(
+    requires_llm,
     app_and_client,
     alertmanager_payload,
     sign_alertmanager,
@@ -89,6 +90,7 @@ async def test_reject_does_not_invoke_solver(
 
 
 async def test_callback_bad_signature_rejected(
+    requires_llm,
     client: httpx.AsyncClient,
     alertmanager_payload,
     sign_alertmanager,
@@ -122,6 +124,7 @@ async def test_callback_unknown_correlation_id_returns_404(
 
 
 async def test_callback_wrong_role_returns_403_and_audits(
+    requires_llm,
     client: httpx.AsyncClient,
     alertmanager_payload,
     sign_alertmanager,
@@ -148,6 +151,7 @@ async def test_callback_wrong_role_returns_403_and_audits(
 
 
 async def test_callback_double_approve_returns_409(
+    requires_llm,
     client: httpx.AsyncClient,
     alertmanager_payload,
     sign_alertmanager,
@@ -165,6 +169,7 @@ async def test_callback_double_approve_returns_409(
 
 
 async def test_callback_after_deadline_returns_approval_expired(
+    requires_llm,
     client: httpx.AsyncClient,
     alertmanager_payload,
     sign_alertmanager,
