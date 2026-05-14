@@ -170,7 +170,7 @@ async def alertmanager_webhook(
         datetime.now(timezone.utc) - timedelta(seconds=settings.dedup_window_seconds)
     ).isoformat()
     deadline_iso = (
-        datetime.now(timezone.utc) + timedelta(minutes=settings.APPROVAL_WINDOW_MINUTES)
+        datetime.now(timezone.utc) + timedelta(seconds=settings.approval_window_seconds)
     ).isoformat()
 
     async with get_conn() as conn:

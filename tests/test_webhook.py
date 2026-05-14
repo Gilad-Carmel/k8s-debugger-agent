@@ -146,6 +146,31 @@ async def test_webhook_dedup_window_uses_runtime_setting(
         settings.dedup_window_seconds = previous_window
 
 
+async def test_webhook_approval_deadline_uses_seconds_precision(
+    client: httpx.AsyncClient, alertmanager_payload, sign_alertmanager
+) -> None:
+    previous_window = settings.approval_window_seconds
+    settings.approval_window_seconds = 90
+    try:
+        r = await fire_webhook(client, alertmanager_payload(), sign_alertmanager)
+        assert r.status_code == 202
+        cid = r.json()["correlation_id"]
+
+        async with get_conn() as conn:
+            cur = await conn.execute(
+                "SELECT received_at, approval_deadline FROM incidents WHERE correlation_id = ?",
+                (cid,),
+            )
+            row = await cur.fetchone()
+
+        assert row is not None
+        received_at = datetime.fromisoformat(row["received_at"])
+        approval_deadline = datetime.fromisoformat(row["approval_deadline"])
+        assert 89 <= (approval_deadline - received_at).total_seconds() <= 91
+    finally:
+        settings.approval_window_seconds = previous_window
+
+
 async def test_webhook_dedup_is_not_split_by_startsat_bucket_boundary(
     client: httpx.AsyncClient, alertmanager_payload, sign_alertmanager
 ) -> None:
