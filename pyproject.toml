@@ -22,9 +22,7 @@ dependencies = [
     "langchain-openai",
     "openai",
     # Persistence
-    "sqlalchemy>=2.0",
-    "asyncpg",      # Postgres driver (prod)
-    "aiosqlite",    # SQLite driver (dev/CI)
+    "aiosqlite",    # SQLite driver
     # Observability
     "structlog",
     "opentelemetry-api",
@@ -168,7 +166,7 @@ addopts = [
 markers = [
     "unit: fast, no IO",
     "contract: recorded fixtures only",
-    "integration: requires live services (kind cluster, Postgres)",
+    "integration: requires live services (kind cluster)",
     "eval: LLM quality evaluation",
     "perf: latency / cost benchmarks",
 ]

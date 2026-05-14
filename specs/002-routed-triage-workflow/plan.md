@@ -6,7 +6,7 @@
 
 ## Summary
 
-Build a LangGraph state-machine workflow that (a) receives an Alertmanager-style webhook, (b) fetches and pre-filters logs, Kubernetes events, and resource status via an in-repo MCP server, (c) classifies the incident domain (`Application` / `Network` / `Database` / `Unknown`) with a structured-output LLM call, (d) dispatches to a domain-specific Expert agent for diagnosis + proposed fix, (e) renders a chat report with interactive Approve/Reject controls to a mock-Slack receiver, (f) `interrupt`s the graph until an authorized approval click, then (g) resumes into a deterministic (no-LLM) Solver node that executes the exact approved action through tightly-scoped MCP write tools, captures a pre-state snapshot, verifies the post-state, and reports the outcome with the **Inverse Action** computed at execution time from the pre-state (per the fixed Forward → Inverse mapping in the allowed-remediation catalog). Persistence is Postgres (LangGraph checkpointer + append-only audit table) in production and SQLite for local/CI runs.
+Build a LangGraph state-machine workflow that (a) receives an Alertmanager-style webhook, (b) fetches and pre-filters logs, Kubernetes events, and resource status via an in-repo MCP server, (c) classifies the incident domain (`Application` / `Network` / `Database` / `Unknown`) with a structured-output LLM call, (d) dispatches to a domain-specific Expert agent for diagnosis + proposed fix, (e) renders a chat report with interactive Approve/Reject controls to a mock-Slack receiver, (f) `interrupt`s the graph until an authorized approval click, then (g) resumes into a deterministic (no-LLM) Solver node that executes the exact approved action through tightly-scoped MCP write tools, captures a pre-state snapshot, verifies the post-state, and reports the outcome with the **Inverse Action** computed at execution time from the pre-state (per the fixed Forward → Inverse mapping in the allowed-remediation catalog). Persistence is SQLite for all environments (LangGraph checkpointer + append-only audit table via `aiosqlite`; WAL mode enabled). Append-only invariant is enforced at the application layer (`audit.py` is the sole writer; no UPDATE/DELETE SQL anywhere in the codebase).
 
 ## Technical Context
 
@@ -22,15 +22,16 @@ Build a LangGraph state-machine workflow that (a) receives an Alertmanager-style
 - `kubernetes` (official Python client) — used inside MCP tools; never called directly from agent code
 - `fastapi` + `uvicorn` — webhook intake, mock-Slack receiver, interactive callback endpoints
 - `pydantic` v2 — typed state, structured LLM outputs, shared Report schema, MCP tool schemas
-- `sqlalchemy` + `asyncpg` (prod) / `aiosqlite` (dev) — audit table and checkpoint storage
+- `sqlalchemy` + `aiosqlite` — audit table and checkpoint storage
 - `structlog` — correlation-ID-bound structured logging
 - `opentelemetry-api` + `opentelemetry-sdk` — node-entry/exit and MCP-call span instrumentation for the IX perf budget
 - Test: `pytest`, `pytest-asyncio`, `respx` (HTTP mocks), `kind` (real cluster fixture in CI), `deepeval` (LLM evals)
 
 **Storage**:
 
-- LangGraph checkpointer: Postgres (prod) via `langgraph.checkpoint.postgres`; SQLite via `langgraph.checkpoint.sqlite` for dev/CI.
-- Audit log: append-only Postgres table `audit_record` keyed by `correlation_id`. Same SQLite path for dev.
+- LangGraph checkpointer: SQLite via `langgraph.checkpoint.sqlite` (`AsyncSqliteSaver`), WAL mode.
+- Audit log: append-only SQLite table `audit_record` keyed by `correlation_id`. Same `.sqlite3` file as the checkpointer.
+- Append-only invariant: enforced at application layer — `audit.py` is the sole writer; no UPDATE/DELETE statements exist in the codebase (verified by unit test).
 - No cluster-state caching in MVP (every triage refetches; satisfies freshness without an SLO obligation).
 
 **Testing**: `pytest` with:
@@ -84,7 +85,7 @@ Evaluated against `.specify/memory/constitution.md` v1.1.0 (Principles I–IX).
 | II | Cost-Conscious by Design | ✅ Compliant | Local inference eliminates per-token USD cost; Principle II still satisfied: token ceiling is enforced fail-closed (latency + memory budget), per-stage token usage is recorded in audit, and the USD-micros field is retained for cloud-provider forward-compatibility. The "cheapest model that meets the bar" principle maps to lowest max_tokens + temperature=0 for the Router vs. fuller context for Experts. |
 | III | Developer Experience as a Product | ✅ Compliant | Single Slack-style chat message with TL;DR + cited evidence + interactive controls (FR-013/FR-014). Latency SLOs from constitution IX adopted directly (see Performance Goals). One-command local setup via `docker-compose up` (quickstart.md). |
 | IV | Evidence-Backed Triage (NON-NEGOTIABLE) | ✅ Compliant | Router cites (FR-007), Experts cite (FR-010), 100% of user-facing claims cited (SC-005). Hallucination tests run in CI. |
-| V | Observability & Reversibility | ✅ Compliant | Single `correlation_id` joins every stage (FR-028). Audit table records prompt, response, model, tokens, cost, redactions, pre/action/post-state, and the **Inverse Action** computed at Solver execution time (FR-022, FR-023). LangGraph checkpoints provide an additional crash-recovery audit surface. |
+| V | Observability & Reversibility | ✅ Compliant | Single `correlation_id` joins every stage (FR-028). Audit table records prompt, response, model, tokens, cost, redactions, pre/action/post-state, and the **Inverse Action** computed at Solver execution time (FR-022, FR-023). LangGraph checkpoints provide an additional crash-recovery audit surface. Append-only invariant enforced at application layer (`audit.py` sole writer; unit test asserts no UPDATE/DELETE SQL — DB-level role revocation is a Postgres feature not available in SQLite; application-layer enforcement is the MVP tradeoff). |
 | VI | Code Quality | ✅ Compliant | `ruff` + `black` + `mypy --strict` in CI. Cyclomatic complexity cap (15) enforced via `ruff` `C901`. Dependency vetting captured in `research.md` §R13. Two-reviewer rule applies to PRs touching MCP write tools, redaction, budget enforcement, authorization (`auth.py` + role-check), **model selection / provider dependencies (`llm.py`, `settings.py:LLM_*`)**, and this plan. Switch from `anthropic` → `langchain-openai` is a model-dependency change; this plan update counts as the first required review. |
 | VII | Testing Standards (NON-NEGOTIABLE) | ✅ Compliant | Coverage floors 85% / 95% enforced in CI per safety-critical module list (`redaction`, `budget`, `approval`, `auth`, `solver._guards`, MCP `tools/_guards`, MCP write tools). LLM eval suite for Router and per-Expert (all three: Application, Network, Database). Hallucination test on every Expert response. Refusal-path + Inverse-Action-recipe tests for every MCP write tool. |
 | VIII | User Experience Consistency | ✅ Compliant | One pydantic `Report` model produced by the Reporter node; rendered for Slack-mock today, web/CLI later. Shared label vocabulary (`Application` / `Network` / `Database` / `Unknown`). Single error-message template. Timestamps ISO-8601; bytes IEC. |
@@ -202,7 +203,7 @@ tests/
     └── test_graph_state_transitions.py
 
 deploy/
-├── docker-compose.yml                 # agent + mcp + postgres + slack-mock + kind (dev)
+├── docker-compose.yml                 # agent + mcp + slack-mock + kind (dev); SQLite on named volume
 ├── Dockerfile.agent
 ├── Dockerfile.mcp
 ├── slack_mock/
