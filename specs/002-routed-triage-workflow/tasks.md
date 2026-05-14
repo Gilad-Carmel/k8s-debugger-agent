@@ -60,9 +60,9 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 ### Shared contracts (cross-package)
 
 - [x] T012 [P] Label vocabulary (Domain, Confidence, ReportStatus, SolverOutcome, ActionType enums) in `src/shared/labels.py` per data-model.md §Common types
-- [ ] T013 [P] Single user-facing error template in `src/shared/errors.py` (Principle VIII: machine_token + human readable)
-- [ ] T014 [P] Correlation ID (UUIDv7) generation + `contextvars` propagation in `src/shared/correlation.py`
-- [ ] T015 [P] Allowed-remediation catalog with parameter schemas and the fixed Forward → Inverse Action mapping in `src/shared/catalog.py` per spec.md §Assumptions and data-model.md §Allowed-remediation catalog
+- [x] T013 [P] Single user-facing error template in `src/shared/errors.py` (Principle VIII: machine_token + human readable)
+- [x] T014 [P] Correlation ID (UUIDv7) generation + `contextvars` propagation in `src/shared/correlation.py`
+- [x] T015 [P] Allowed-remediation catalog with parameter schemas and the fixed Forward → Inverse Action mapping in `src/shared/catalog.py` per spec.md §Assumptions and data-model.md §Allowed-remediation catalog
 - [x] T016 Pydantic v2 schemas (`Target`, `TimeWindow`, `LogExcerpt`, `FilteredEvidence`, `RoutingDecision`, `ExpertDiagnosis`, `ProposedFix`, `ReversalRecipe`, `Report`, `ApprovalEvent`, `SolverRun`, `Incident`, `ToolError`) in `src/shared/schemas.py` per data-model.md §Entities (depends on T012, T015)
 
 ### Agent core infra
@@ -70,7 +70,7 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 - [x] T017 [P] Pydantic Settings (env-driven config: LLM model IDs, budget ceilings, approval window, dedup window, redaction patterns) in `src/agent/settings.py`
 - [ ] T018 [P] Structured logging configuration bound to correlation contextvar in `src/agent/logging_config.py` (structlog)
 - [ ] T019 [P] OpenTelemetry tracer + node-entry/exit + MCP-call span helpers in `src/agent/telemetry.py` (Principle IX)
-- [ ] T020 [P] Double-pass regex redaction (boundary + pre-LLM) in `src/agent/redaction.py` per research.md §R7 (bearer/AWS/GCP/Azure/SA-token/JWT/DB-conn-string patterns); 95% coverage tier
+- [x] T020 [P] Double-pass regex redaction (boundary + pre-LLM) in `src/agent/redaction.py` per research.md §R7 (bearer/AWS/GCP/Azure/SA-token/JWT/DB-conn-string patterns); 95% coverage tier
 - [ ] T021 [P] Per-incident token + USD-micros budget enforcement (fail-closed) in `src/agent/budget.py` per research.md §R8; 95% coverage tier
 - [ ] T022 SQL migration for the append-only `audit_record` table at `deploy/sql/001_audit_record.sql` per contracts/audit_record.md (schema + indexes + REVOKE UPDATE/DELETE/TRUNCATE)
 - [ ] T023 SQLAlchemy 2.x engine + async session factory (postgres prod / sqlite dev switch) in `src/agent/db.py` (depends on T022)
@@ -82,20 +82,20 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 
 ### MCP server infra
 
-- [ ] T029 MCP server entrypoint (stdio dev / HTTP-SSE prod transports) in `src/mcp_server/server.py` per research.md §R5
-- [ ] T030 [P] Per-tool ServiceAccount loader + scope check in `src/mcp_server/auth.py` (each write tool gets its own kube token; the agent process holds none)
+- [x] T029 MCP server entrypoint (stdio dev / HTTP-SSE prod transports) in `src/mcp_server/server.py` per research.md §R5
+- [x] T030 [P] Per-tool ServiceAccount loader + scope check in `src/mcp_server/auth.py` (each write tool gets its own kube token; the agent process holds none)
 - [ ] T031 Thin MCP client wrapper used by the agent in `src/agent/mcp_client.py` (bounded jittered retries on idempotent reads per research.md §R8; no retry on writes)
 
 ### Kill switch + tenant guard
 
-- [ ] T032 [P] MCP `POST /admin/kill-switch` endpoint (IP-restricted, ≤5s propagation) in `src/mcp_server/admin.py` per contracts/mcp_tools.md §Kill switch
+- [x] T032 [P] MCP `POST /admin/kill-switch` endpoint (IP-restricted, ≤5s propagation) in `src/mcp_server/admin.py` per contracts/mcp_tools.md §Kill switch
 - [ ] T033 [P] Agent-side kill-switch cache + check helper in `src/agent/kill_switch.py`
 
 ### Foundational unit tests
 
-- [ ] T034 [P] Unit tests for redaction patterns (positive + negative) in `tests/unit/test_redaction.py` (95% coverage gate)
+- [x] T034 [P] Unit tests for redaction patterns (positive + negative) in `tests/unit/test_redaction.py` (95% coverage gate)
 - [ ] T035 [P] Unit tests for budget fail-closed behavior in `tests/unit/test_budget.py` (95% coverage gate)
-- [ ] T036 [P] Unit tests for catalog Forward → Inverse Action mapping table in `tests/unit/test_inverse_actions.py`
+- [x] T036 [P] Unit tests for catalog Forward → Inverse Action mapping table in `tests/unit/test_inverse_actions.py`
 - [ ] T037 [P] Unit tests for audit append-only invariants (REVOKE enforcement, sequence_no monotonicity, redaction in `prompt`/`response`) in `tests/unit/test_audit_record.py`
 
 **Checkpoint**: Foundation ready — user story implementation can now begin.
@@ -116,9 +116,9 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 
 ### Implementation for User Story 1
 
-- [ ] T041 [P] [US1] MCP read tool `search_pod_logs` with additive contextual N-line window + K-line fallback + boundary redaction in `src/mcp_server/tools/search_pod_logs.py` (FR-004, R7)
-- [ ] T042 [P] [US1] MCP read tool `get_pod_events` (last N minutes of Kubernetes events for target) in `src/mcp_server/tools/get_pod_events.py`
-- [ ] T043 [P] [US1] MCP read tool `get_pod` (phase, container states, restart counts, resource_version) in `src/mcp_server/tools/get_pod.py`
+- [x] T041 [P] [US1] MCP read tool `search_pod_logs` with additive contextual N-line window + K-line fallback + boundary redaction in `src/mcp_server/tools/search_pod_logs.py` (FR-004, R7)
+- [x] T042 [P] [US1] MCP read tool `get_pod_events` (last N minutes of Kubernetes events for target) in `src/mcp_server/tools/get_pod_events.py`
+- [x] T043 [P] [US1] MCP read tool `get_pod` (phase, container states, restart counts, resource_version) in `src/mcp_server/tools/get_pod.py`
 - [ ] T044 [US1] Webhook intake `POST /webhook/alertmanager` (HMAC verify constant-time, parse Alertmanager v4 subset, dedup fingerprint via R12, 202 with `correlation_id`) in `src/agent/api/webhook.py` (depends on T016, T024, T028)
 - [ ] T045 [US1] Ingest node: TTFT ack emitted to slack-mock before any LLM call; calls the three MCP read tools concurrently; populates `evidence` on `WorkflowState` in `src/agent/graph/nodes/ingest.py` (depends on T031, T041-T043)
 - [x] T046 [US1] Router node (fast-sampling profile, structured pydantic output via `.with_structured_output()`: `domain`, `confidence`, `cited_evidence ≥1` unless Unknown, `runners_up`) in `src/agent/graph/nodes/router.py` (FR-005..FR-008; depends on T027)
@@ -193,11 +193,11 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 
 ### Implementation for US3
 
-- [ ] T077 [P] [US3] MCP write tool `restart_pod` with pre-flight token+fingerprint check, default-grace-period delete, post-state verification window in `src/mcp_server/tools/restart_pod.py` (FR-020..FR-025)
-- [ ] T078 [P] [US3] MCP write tool `rollback_deployment` (verifies `to_revision` exists; `pre_state.current_revision ≠ post_state.current_revision` on `applied`) in `src/mcp_server/tools/rollback_deployment.py`
-- [ ] T079 [P] [US3] MCP write tool `scale_deployment` (tenant `[min,max]` bound enforced server-side; `out_of_bounds` error) in `src/mcp_server/tools/scale_deployment.py`
-- [ ] T080 [P] [US3] MCP write tool `delete_pod_to_reschedule` (admission/PDB-respecting; NEVER `--force`, NEVER `--grace-period=0`) in `src/mcp_server/tools/delete_pod_to_reschedule.py`
-- [ ] T081 [US3] Write-tool guards (admission/PDB/quota refusal handler, kill-switch check, no-force enforcement) shared across write tools in `src/mcp_server/tools/_guards.py` (95% coverage tier; depends on T030, T033)
+- [x] T077 [P] [US3] MCP write tool `restart_pod` with pre-flight token+fingerprint check, default-grace-period delete, post-state verification window in `src/mcp_server/tools/restart_pod.py` (FR-020..FR-025)
+- [x] T078 [P] [US3] MCP write tool `rollback_deployment` (verifies `to_revision` exists; `pre_state.current_revision ≠ post_state.current_revision` on `applied`) in `src/mcp_server/tools/rollback_deployment.py`
+- [x] T079 [P] [US3] MCP write tool `scale_deployment` (tenant `[min,max]` bound enforced server-side; `out_of_bounds` error) in `src/mcp_server/tools/scale_deployment.py`
+- [x] T080 [P] [US3] MCP write tool `delete_pod_to_reschedule` (admission/PDB-respecting; NEVER `--force`, NEVER `--grace-period=0`) in `src/mcp_server/tools/delete_pod_to_reschedule.py`
+- [x] T081 [US3] Write-tool guards (admission/PDB/quota refusal handler, kill-switch check, no-force enforcement) shared across write tools in `src/mcp_server/tools/_guards.py` (95% coverage tier; depends on T030, T033)
 - [ ] T082 [P] [US3] Per-target Solver serialization lock (no concurrent mutations on the same resource per FR-026) in `src/agent/solver_lock.py`
 - [ ] T083 [US3] Solver node (NO LLM): verify `proposed_fix.fingerprint` against frozen Report; capture pre-state via `get_pod`/Deployment read; refuse with `failure: pre-state-incomplete` if FR-022 fields missing; call the matching MCP write tool with the signed approval token; wait verification window; capture post-state; compute Inverse Action via catalog mapping over `pre_state`; build `SolverRun` in `src/agent/graph/nodes/solver.py` (depends on T015, T016, T024, T031, T068, T077-T082)
 - [ ] T084 [US3] Reporter follow-up message (success/partial/failure + post-state summary + Inverse Action; on `partial` surface Inverse prominently) extending `src/agent/graph/nodes/reporter.py` (extends T051 — same file, run sequentially)
