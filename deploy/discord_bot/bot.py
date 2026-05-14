@@ -125,6 +125,15 @@ class ApprovalView(discord.ui.View):
         for item in self.children:
             item.disabled = True  # type: ignore[union-attr]
 
+        message = _posted.get(self.correlation_id)
+        if message is None:
+            return
+
+        try:
+            await message.edit(view=self)
+        except Exception as exc:
+            logger.warning("failed to disable timed-out view corr=%s: %s", self.correlation_id, exc)
+
 
 # ---------------------------------------------------------------------------
 # Embed builder — single function handles every lifecycle state
