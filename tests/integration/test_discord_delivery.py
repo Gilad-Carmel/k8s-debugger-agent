@@ -96,7 +96,7 @@ async def test_discord_delivery_posts_to_discord_only() -> None:
                 return_value=httpx.Response(200, json={"message_id": "should-not-be-called"})
             )
 
-            delivered_at, message_id = await chat_deliver(report)
+            _, message_id = await chat_deliver(report)
 
         assert discord_route.called, "Discord bot endpoint was not called"
         assert not slack_route.called, "Slack endpoint should NOT be called when surface=discord"
