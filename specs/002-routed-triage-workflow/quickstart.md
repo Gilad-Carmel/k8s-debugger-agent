@@ -12,10 +12,10 @@ The goal of this quickstart is to take a fresh checkout to a successful end-to-e
 
 - Docker + Docker Compose v2.
 - `kind` (Kubernetes in Docker) — used for the local fixture cluster.
-- An Anthropic API key in your environment as `ANTHROPIC_API_KEY`.
+- An OpenAI-compatible local inference server (Ollama, LM Studio, vLLM) running at the URL in `LLM_BASE_URL` (default `http://host.docker.internal:11434/v1`).
 - Python 3.11+ if you plan to run the test suite outside containers.
 
-That's it. No real Slack workspace, no real Kubernetes cluster, no Postgres install — all provided by the compose stack.
+That's it. No real Slack workspace, no real Kubernetes cluster, no external database — all provided by the compose stack.
 
 ---
 
@@ -38,15 +38,15 @@ What comes up:
 | `agent` | `8080` | FastAPI: webhook intake + Slack callbacks; runs the LangGraph workflow |
 | `mcp-server` | `8081` | MCP server: read tools + scoped-write tools |
 | `slack-mock` | `8090` | Tiny FastAPI receiver mimicking Slack Block Kit + interactive callbacks |
-| `postgres` | `5432` | LangGraph checkpoints + append-only `audit_record` table |
 | `kind-control-plane` | (internal) | Local Kubernetes cluster, pre-seeded with three fixture workloads |
+
+Persistence: SQLite at `/app/data/agent.sqlite3` (named volume `sqlite_data`). Schema is bootstrapped automatically by `src/agent/db.py` on first startup — no manual migration step needed.
 
 On first start, an init container:
 
 1. Creates a `kind` cluster.
 2. Applies `tests/fixtures/cluster/*.yaml` (three deployments simulating Application, Network, and Database failure modes).
-3. Initializes the Postgres schema (`agent` and `audit_record` tables; revokes UPDATE/DELETE on `audit_record`).
-4. Mints per-tool ServiceAccount tokens for the MCP write tools, mounted into `mcp-server` only.
+3. Mints per-tool ServiceAccount tokens for the MCP write tools, mounted into `mcp-server` only.
 
 When `make dev` settles, you should see in the agent logs:
 
@@ -111,7 +111,7 @@ Within ~30 s, a follow-up message appears in the same thread:
 make audit CORRELATION=01J...
 ```
 
-…runs:
+…runs a `sqlite3` query against the local `agent.sqlite3` file:
 
 ```sql
 SELECT sequence_no, stage, outcome, at
@@ -159,7 +159,7 @@ CI runs `make test` plus `make perf`. Coverage gates are 85% pure logic / 95% sa
 | Approve button does nothing | slack-mock callback signature mismatch | Restart the stack so the shared secret is consistent |
 | Solver returns `code: approval_invalid` | The approval was rendered against an older `ProposedFix` and the report has been re-rendered | Click Approve on the newest message; older messages are intentionally inert |
 | `make smoke` returns a correlation id but no triage runs | Per-tenant kill switch engaged | `curl -X POST http://localhost:8081/admin/kill-switch?tenant=dev&action=clear` |
-| LLM call refused with `budget_exceeded` | Per-incident budget set very low in `deploy/dev.env` | Raise `BUDGET_USD_MICROS_PER_INCIDENT` |
+| LLM call refused with `budget_exceeded` | Per-incident budget set very low in `deploy/dev.env` | Raise `BUDGET_TOKENS_PER_INCIDENT` |
 
 ---
 
@@ -169,7 +169,7 @@ CI runs `make test` plus `make perf`. Coverage gates are 85% pure logic / 95% sa
 make clean
 ```
 
-…brings the stack down and deletes the `kind` cluster. Postgres data is on a named volume and is dropped here; if you want to keep audit history across runs, use `docker compose down` without `-v`.
+…brings the stack down and deletes the `kind` cluster. The SQLite data is on the `sqlite_data` named volume and is dropped here; if you want to keep audit history across runs, use `docker compose down` without `-v`.
 
 ---
 

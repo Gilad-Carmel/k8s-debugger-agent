@@ -1,0 +1,45 @@
+# deploy/Dockerfile.agent
+#
+# Agent service: FastAPI webhook intake + LangGraph workflow runner.
+#
+# Memory budget: <= 512 MiB RSS (plan.md Constraints, Principle IX)
+# Exposed port  : 8080
+# Entry point   : src.agent.api:create_app  (FastAPI factory)
+#
+# Build from repo root:
+#   docker build -f deploy/Dockerfile.agent -t k8s-debugger-agent .
+#
+# Or via compose:
+#   docker compose -f deploy/docker-compose.yml build agent
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# uv for fast, reproducible installs.
+RUN pip install --no-cache-dir uv==0.6.14
+
+# Project layout uses src/ packages declared in pyproject.toml's
+# [tool.hatch.build.targets.wheel].packages, so the source tree MUST be
+# present at the time `uv pip install .` runs (hatchling builds a wheel).
+COPY pyproject.toml ./
+COPY src/ src/
+
+RUN uv pip install --system --no-cache .
+
+# Data directory for the SQLite database (mounted as a volume in compose).
+RUN mkdir -p /app/data
+
+EXPOSE 8080
+
+# Use --timeout-keep-alive 30 to match the p95 SLO (spec SC-003).
+# create_app() is a FastAPI factory, so we pass --factory to uvicorn.
+CMD ["python", "-m", "uvicorn", \
+     "src.agent.api:create_app", \
+     "--factory", \
+     "--host", "0.0.0.0", \
+     "--port", "8080", \
+     "--timeout-keep-alive", "30"]
