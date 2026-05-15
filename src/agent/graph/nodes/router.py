@@ -62,7 +62,12 @@ incident into exactly one of these three domains based on the log evidence:
   Java stack traces, Python tracebacks), OOM kills, container restart-loops,
   application-level runtime errors.
 • Network — connection refused/timeout to internal or external services, DNS
-  resolution failures, TLS/certificate errors, network policy blocks.
+  resolution failures, TLS/certificate errors, network policy blocks,
+  ImagePullBackOff/ErrImagePull where the kubelet cannot reach the registry
+  (DNS failure, TLS error, connection refused/timeout, or rate-limit). Note:
+  image-pull failures due to auth (401/403, missing imagePullSecrets) or a
+  wrong tag/repo in the manifest are config problems, not network — classify
+  those as Unknown if no other domain fits.
 • Unknown — insufficient evidence to classify with confidence.
 
 Respond ONLY with a JSON object — no prose, no markdown, no code fence.
