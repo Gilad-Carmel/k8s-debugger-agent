@@ -78,11 +78,126 @@ async def _run_graph(graph: Any, correlation_id: str, alert_payload: dict[str, A
     }
     try:
         await graph.ainvoke(initial_state, config=config)
-        # When ainvoke returns, the graph either ended or hit the
-        # interrupt_before=["solver"] gate. Either way, no more work here.
         log.info("graph.run_completed", correlation_id=correlation_id)
     except Exception as exc:  # noqa: BLE001 — last-line-of-defense logging
         log.error("graph.run_failed", correlation_id=correlation_id, error=str(exc))
+
+
+async def _run_graph_streaming(graph: Any, correlation_id: str, alert_payload: dict[str, Any]) -> None:
+    """
+    Streaming variant of _run_graph that publishes WorkflowEvents to the GUI
+    event bus for each node boundary. Falls back to ainvoke if streaming fails.
+
+    Node names that emit events match the LangGraph node names in builder.py:
+      ingest, router, application_expert, network_expert, database_expert,
+      reporter, solver.
+    """
+    from src.agent.api.gui.event_bus import WorkflowEventType, publish
+
+    bind(correlation_id)
+    config = {"configurable": {"thread_id": correlation_id}}
+    initial_state = {
+        "correlation_id": correlation_id,
+        "alert_payload": alert_payload,
+    }
+
+    _TRACKED_NODES = {
+        "ingest", "router",
+        "application_expert", "network_expert", "database_expert",
+        "reporter", "solver",
+    }
+
+    try:
+        async for event in graph.astream_events(initial_state, config=config, version="v2"):
+            kind = event.get("event", "")
+            name = event.get("name", "")
+
+            if name not in _TRACKED_NODES:
+                continue
+
+            if kind == "on_chain_start":
+                await publish(correlation_id, WorkflowEventType.NODE_STARTED, node=name)
+
+            elif kind == "on_chain_end":
+                output = event.get("data", {}).get("output") or {}
+                node_data: dict[str, Any] = {}
+
+                if name == "router" and isinstance(output, dict):
+                    routing = output.get("routing") or {}
+                    node_data = {
+                        "domain": getattr(routing, "domain", routing.get("domain", "")),
+                        "confidence": getattr(routing, "confidence", routing.get("confidence", 0)),
+                    }
+                elif name in {"application_expert", "network_expert", "database_expert"} and isinstance(output, dict):
+                    diag = output.get("diagnosis") or {}
+                    node_data = {
+                        "root_cause_label": getattr(diag, "root_cause_label", diag.get("root_cause_label", "")),
+                        "severity": getattr(diag, "severity", diag.get("severity", "")),
+                    }
+                elif name == "reporter" and isinstance(output, dict):
+                    report = output.get("report") or {}
+                    pf = getattr(report, "proposed_fix", None) or report.get("proposed_fix") or {}
+                    node_data = {
+                        "summary": getattr(report, "summary", report.get("summary", "")),
+                        "proposed_fix_title": getattr(pf, "title", pf.get("title", "") if isinstance(pf, dict) else ""),
+                    }
+                    # After reporter completes the graph hits the HITL gate
+                    await publish(
+                        correlation_id,
+                        WorkflowEventType.NODE_COMPLETED,
+                        node=name,
+                        data=node_data,
+                    )
+                    await publish(
+                        correlation_id,
+                        WorkflowEventType.AWAITING_APPROVAL,
+                        data={
+                            "proposed_fix_title": node_data.get("proposed_fix_title", ""),
+                            "proposed_fix_description": "",
+                        },
+                    )
+                    continue
+
+                elif name == "solver" and isinstance(output, dict):
+                    solver_run = output.get("solver_run") or {}
+                    node_data = {
+                        "tool_called": getattr(solver_run, "tool_called", solver_run.get("tool_called", "")),
+                        "outcome": getattr(solver_run, "outcome", solver_run.get("outcome", "")),
+                    }
+                    await publish(
+                        correlation_id,
+                        WorkflowEventType.NODE_COMPLETED,
+                        node=name,
+                        data=node_data,
+                    )
+                    await publish(correlation_id, WorkflowEventType.SOLVER_DONE, data=node_data)
+                    continue
+
+                await publish(
+                    correlation_id,
+                    WorkflowEventType.NODE_COMPLETED,
+                    node=name,
+                    data=node_data,
+                )
+
+            elif kind == "on_chain_error":
+                err = str(event.get("data", {}).get("error", "unknown error"))
+                await publish(
+                    correlation_id,
+                    WorkflowEventType.NODE_FAILED,
+                    node=name,
+                    data={"error": err},
+                )
+
+        log.info("graph.streaming_run_completed", correlation_id=correlation_id)
+
+    except Exception as exc:  # noqa: BLE001
+        log.error("graph.streaming_run_failed", correlation_id=correlation_id, error=str(exc))
+        try:
+            from src.agent.api.gui.event_bus import WorkflowEventType as WET, publish as pub
+            await pub(correlation_id, WET.RUN_FAILED, data={"error": str(exc)})
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -310,13 +425,14 @@ async def alertmanager_webhook(
         },
     )
 
-    # Kick off the graph in the background. ainvoke runs until the
-    # interrupt_before=["solver"] gate; the HITL callback resumes it.
-    # spawn_tracked keeps a strong ref so the task can't be GC'd mid-run.
+    # Kick off the graph in the background. The streaming variant publishes
+    # WorkflowEvents to the GUI event bus; falling back to plain ainvoke if
+    # streaming raises. spawn_tracked keeps a strong ref so the task can't
+    # be GC'd mid-run.
     from src.agent.api import spawn_tracked
 
     graph = request.app.state.graph
-    spawn_tracked(request.app, _run_graph(graph, cid, payload.model_dump(mode="json")))
+    spawn_tracked(request.app, _run_graph_streaming(graph, cid, payload.model_dump(mode="json")))
 
     return JSONResponse(
         status_code=202,

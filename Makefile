@@ -1,5 +1,6 @@
 .PHONY: dev test test-unit eval perf audit audit-check smoke clean \
-        demo-deploy demo-teardown demo-reset demo-crash demo-bad-deploy demo-oom demo-scale
+        demo-deploy demo-teardown demo-reset demo-crash demo-bad-deploy demo-oom demo-scale \
+        gui-install gui-dev gui-build gui-serve
 
 # ---------------------------------------------------------------------------
 # Routed triage workflow targets  (feature 002 / quickstart.md)
@@ -73,3 +74,24 @@ demo-oom: demo-deploy
 
 demo-scale: demo-deploy
 	@bash scripts/demo/trigger-scale.sh
+
+# ---------------------------------------------------------------------------
+# GUI targets — React SPA + FastAPI (feature 008)
+# ---------------------------------------------------------------------------
+
+## gui-install — install frontend npm dependencies (first time only)
+gui-install:
+	cd gui && npm install
+
+## gui-dev — start Vite dev server (port 5173) + agent API (port 8000) concurrently
+gui-dev: gui-install
+	GUI_DEV_MODE=true uvicorn src.agent.api:create_app --factory --reload --port 8000 &
+	cd gui && npm run dev
+
+## gui-build — compile the React SPA into gui/dist/
+gui-build: gui-install
+	cd gui && npm run build
+
+## gui-serve — serve the built SPA + API from a single origin (port 8000)
+gui-serve: gui-build
+	GUI_STATIC_DIR=gui/dist uvicorn src.agent.api:create_app --factory --port 8000

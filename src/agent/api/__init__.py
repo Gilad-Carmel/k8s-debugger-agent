@@ -167,12 +167,70 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     app = FastAPI(title="k8s-debugger-agent", lifespan=lifespan)
 
+    # Loopback guard for GUI approval endpoints — rejects requests from
+    # non-localhost origins so the secret-free approval path can't be
+    # called externally.
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.requests import Request as StarletteRequest
+    from starlette.responses import JSONResponse as StarletteJSONResponse
+
+    class LoopbackGuardMiddleware(BaseHTTPMiddleware):
+        _PROTECTED_PREFIX = "/api/approval/"
+
+        async def dispatch(self, request: StarletteRequest, call_next):  # type: ignore[override]
+            if request.url.path.startswith(self._PROTECTED_PREFIX):
+                client_host = request.client.host if request.client else ""
+                if client_host not in ("127.0.0.1", "::1", "localhost"):
+                    return StarletteJSONResponse(
+                        status_code=403,
+                        content={
+                            "error": "forbidden",
+                            "message": "GUI approval endpoint is only accessible from localhost.",
+                        },
+                    )
+            return await call_next(request)
+
+    app.add_middleware(LoopbackGuardMiddleware)
+
+    # CORS for Vite dev server (port 5173). Enabled only when GUI_DEV_MODE=true.
+    import os
+    if os.getenv("GUI_DEV_MODE", "").lower() in ("1", "true", "yes"):
+        from fastapi.middleware.cors import CORSMiddleware
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["http://localhost:5173"],
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
     # Routers — imported lazily to keep create_app() side-effect-free.
     from src.agent.api.callbacks import router as callbacks_router
     from src.agent.api.health import router as health_router
     from src.agent.api.webhook import router as webhook_router
 
+    # GUI routers
+    from src.agent.api.gui import (
+        approval_router,
+        pods_router,
+        scenarios_router,
+        stream_router,
+    )
+
     app.include_router(health_router)
     app.include_router(webhook_router)
     app.include_router(callbacks_router)
+    app.include_router(pods_router)
+    app.include_router(scenarios_router)
+    app.include_router(stream_router)
+    app.include_router(approval_router)
+
+    # Optionally serve the built GUI SPA from gui/dist/ when GUI_STATIC_DIR is set.
+    gui_static_dir = os.getenv("GUI_STATIC_DIR", "")
+    if gui_static_dir:
+        import pathlib
+        from fastapi.staticfiles import StaticFiles
+        static_path = pathlib.Path(gui_static_dir)
+        if static_path.is_dir():
+            app.mount("/", StaticFiles(directory=str(static_path), html=True), name="gui")
+
     return app

@@ -77,3 +77,8 @@ logs/
 
 # Docker
 .dockerignore
+
+# Frontend (feature 008 GUI)
+gui/node_modules/
+gui/dist/
+gui/.vite/
