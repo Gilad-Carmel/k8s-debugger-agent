@@ -63,6 +63,15 @@ async def get_conn() -> AsyncIterator[aiosqlite.Connection]:
         await conn.close()
 
 
+async def set_proposed_fix_fingerprint(correlation_id: str, fingerprint: str) -> None:
+    async with get_conn() as conn:
+        await conn.execute(
+            "UPDATE incidents SET proposed_fix_fingerprint = ? WHERE correlation_id = ?",
+            (fingerprint, correlation_id),
+        )
+        await conn.commit()
+
+
 async def init_db() -> None:
     """Create the audit_log + incidents tables on startup. Idempotent."""
     db_dir = os.path.dirname(settings.SQLITE_PATH)
