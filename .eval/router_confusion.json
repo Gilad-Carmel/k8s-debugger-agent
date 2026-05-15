@@ -1,0 +1,161 @@
+{
+  "generated_at": "2026-05-15T03:01:31.915884+00:00",
+  "domains": [
+    "Application",
+    "Network",
+    "Unknown"
+  ],
+  "pairs": [
+    {
+      "expected": "Application",
+      "predicted": "Application"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Application"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Application"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Application"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Application"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Application"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Application"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Application"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Unknown"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Application"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Application"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Application"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Application"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Unknown"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Unknown"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Unknown"
+    },
+    {
+      "expected": "Network",
+      "predicted": "Network"
+    },
+    {
+      "expected": "Network",
+      "predicted": "Network"
+    },
+    {
+      "expected": "Network",
+      "predicted": "Network"
+    },
+    {
+      "expected": "Network",
+      "predicted": "Network"
+    },
+    {
+      "expected": "Network",
+      "predicted": "Network"
+    },
+    {
+      "expected": "Network",
+      "predicted": "Network"
+    },
+    {
+      "expected": "Network",
+      "predicted": "Network"
+    },
+    {
+      "expected": "Network",
+      "predicted": "Network"
+    },
+    {
+      "expected": "Network",
+      "predicted": "Unknown"
+    },
+    {
+      "expected": "Network",
+      "predicted": "Network"
+    },
+    {
+      "expected": "Network",
+      "predicted": "Network"
+    },
+    {
+      "expected": "Application",
+      "predicted": "Network"
+    },
+    {
+      "expected": "Unknown",
+      "predicted": "Unknown"
+    },
+    {
+      "expected": "Unknown",
+      "predicted": "Unknown"
+    },
+    {
+      "expected": "Unknown",
+      "predicted": "Unknown"
+    },
+    {
+      "expected": "Unknown",
+      "predicted": "Unknown"
+    },
+    {
+      "expected": "Unknown",
+      "predicted": "Unknown"
+    }
+  ],
+  "per_domain": {
+    "Application": {
+      "pass": 15,
+      "fail": 2
+    },
+    "Network": {
+      "pass": 11,
+      "fail": 0
+    },
+    "Unknown": {
+      "pass": 5,
+      "fail": 0
+    }
+  },
+  "totals": {
+    "pass": 31,
+    "fail": 2,
+    "total": 33
+  }
+}

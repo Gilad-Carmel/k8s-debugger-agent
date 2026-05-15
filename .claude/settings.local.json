@@ -17,7 +17,13 @@
       "Bash(xargs -I{} taskkill //PID {} //F)",
       "Bash(git rm *)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(chmod +x *)",
+      "Bash(uv run *)",
+      "Bash(git *)"
     ]
-  }
+  },
+  "disabledMcpjsonServers": [
+    "k8s-debugger"
+  ]
 }
