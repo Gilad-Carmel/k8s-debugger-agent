@@ -228,23 +228,37 @@ def validate_action(
 
     if action == "rollback-deployment":
         rev = parameters.get("to_revision") if isinstance(parameters, dict) else None
+        dep = parameters.get("deployment") if isinstance(parameters, dict) else None
         if not isinstance(rev, int) or rev < 0:
             logger.warning(
                 "rollback-deployment missing/invalid to_revision %r; dropping fix",
                 rev,
             )
             return None, {}
-        return "rollback-deployment", {"to_revision": rev}
+        if not isinstance(dep, str) or not dep:
+            logger.warning(
+                "rollback-deployment missing/invalid deployment %r; dropping fix",
+                dep,
+            )
+            return None, {}
+        return "rollback-deployment", {"to_revision": rev, "deployment": dep}
 
     if action == "scale-deployment":
         rep = parameters.get("to_replicas") if isinstance(parameters, dict) else None
+        dep = parameters.get("deployment") if isinstance(parameters, dict) else None
         if not isinstance(rep, int) or rep < 0:
             logger.warning(
                 "scale-deployment missing/invalid to_replicas %r; dropping fix",
                 rep,
             )
             return None, {}
-        return "scale-deployment", {"to_replicas": rep}
+        if not isinstance(dep, str) or not dep:
+            logger.warning(
+                "scale-deployment missing/invalid deployment %r; dropping fix",
+                dep,
+            )
+            return None, {}
+        return "scale-deployment", {"to_replicas": rep, "deployment": dep}
 
     # Defensive: new ActionType entry added without updating this validator.
     logger.error("unhandled action_type %r — update validate_action in _base.py", action)
@@ -275,6 +289,9 @@ class BaseExpert(ABC):
       - Set ``domain`` (class variable) to one of the ``Domain`` literals.
       - Set ``_system_prompt`` (class variable) to the domain-specific prompt
         string that enforces Constitution IV and catalog-bounded actions.
+      - Optionally narrow ``_allowed_actions`` (class variable) to a subset of
+        ``ACTION_TYPES`` if the domain is not allowed to propose every catalog
+        entry at MVP (see spec 007 FR-011 for the Network case).
       - Implement ``_stub_diagnosis`` as a hard-coded fallback used by
         scaffolding runs and unit tests that bypass the LLM call.
 
@@ -286,6 +303,15 @@ class BaseExpert(ABC):
 
     domain: ClassVar[Domain]
     _system_prompt: ClassVar[str] = ""  # subclasses MUST override (T049/T050 pending)
+
+    # Per-domain action subset. Default = the full catalog; a subclass narrows
+    # this when its domain is restricted to a subset (e.g. spec 007 FR-011
+    # restricts the Network expert to {restart-pod, rollback-deployment} for
+    # MVP). The runtime filter in _run_real_diagnosis enforces this *after*
+    # the catalog-wide validate_action(), so prompt-only escapes (a drifted /
+    # jailbroken model that emits an out-of-subset action) are caught before
+    # any Approve button is surfaced (Principle I — Safety-First Autonomy).
+    _allowed_actions: ClassVar[frozenset[str]] = ACTION_TYPES
 
     # ------------------------------------------------------------------
     # LangGraph entry point
@@ -482,6 +508,24 @@ class BaseExpert(ABC):
         action_str = None if force_low_confidence else parsed.proposed_action
         params_in = {} if force_low_confidence else parsed.proposed_parameters
         validated_action, validated_params = validate_action(action_str, params_in)
+
+        # Per-domain action subset enforcement (spec 007 FR-011, Principle I).
+        # validate_action() guarantees the action is in the catalog; this
+        # second gate narrows the catalog to the subset this domain is
+        # permitted to propose. A drifted or jailbroken model that emits an
+        # out-of-subset catalog action (e.g. the Network expert returning
+        # "scale-deployment") is caught here — BEFORE the Reporter surfaces
+        # an Approve button — and the proposed fix is dropped.
+        if validated_action is not None and validated_action not in self._allowed_actions:
+            logger.warning(
+                "%s_expert proposed catalog action %r which is not in the "
+                "per-domain allowed set %r; dropping fix.",
+                self.domain.lower(),
+                validated_action,
+                sorted(self._allowed_actions),
+            )
+            validated_action = None
+            validated_params = {}
 
         proposed_fix: Optional[ProposedFix] = None
         if validated_action is not None:

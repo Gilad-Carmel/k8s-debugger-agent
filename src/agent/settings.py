@@ -100,12 +100,23 @@ class AgentSettings(BaseSettings):
         description="Shared secret for verifying Alertmanager webhook HMAC signatures.",
     )
     slack_mock_secret: str = Field(
-        default="dev-slack-secret",
-        description="HMAC secret used to sign /callbacks/slack payloads.",
+        default="dev-mock-secret",
+        description="HMAC secret used to sign /callbacks/slack payloads. Must match SLACK_MOCK_SECRET in the Discord bot.",
     )
     slack_mock_url: str = Field(
         default="http://localhost:9000",
         description="URL of the mock-Slack receiver service.",
+    )
+    discord_bot_url: str = Field(
+        default="http://localhost:8091",
+        description="URL of the Discord bot HTTP receiver (POST /messages).",
+    )
+    chat_surface: str = Field(
+        default="slack",
+        description=(
+            "Which chat surface(s) to deliver reports to. "
+            "Values: 'slack' | 'discord' | 'all'."
+        ),
     )
 
     # ------------------------------------------------------------------
@@ -161,6 +172,14 @@ class AgentSettings(BaseSettings):
     # (writable so per-test fixtures can point at a tmp file).
     # New code should use the lower_case names directly.
     # ------------------------------------------------------------------
+    @property
+    def DISCORD_BOT_URL(self) -> str:  # noqa: N802
+        return self.discord_bot_url
+
+    @property
+    def CHAT_SURFACE(self) -> str:  # noqa: N802
+        return self.chat_surface
+
     @property
     def ALERTMANAGER_HMAC_SECRET(self) -> str:  # noqa: N802
         return self.alertmanager_hmac_secret

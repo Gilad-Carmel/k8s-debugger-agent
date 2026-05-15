@@ -19,11 +19,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Coroutine, Optional, TypeVar
 
-from src.agent.approval_token import issue_token
+_T = TypeVar("_T")
+
+from src.agent.approval_token import verify_token
 from src.agent.graph.state import WorkflowState
 from src.agent.solver_lock import solver_target_lock
+from src.shared.labels import SolverOutcome
 from src.shared.schemas import ProposedFix, Report, ReversalRecipe, SolverRun, WriteToolOutput
 
 logger = logging.getLogger(__name__)
@@ -57,10 +60,13 @@ async def _execute_fix(
         )
 
     if action_type == "rollback-deployment":
+        deployment = fix.parameters.get("deployment")
+        if not deployment:
+            raise ValueError("rollback-deployment requires parameters['deployment'] (got missing or empty)")
         from src.mcp_server.tools.rollback_deployment import rollback_deployment  # noqa: PLC0415
         return await rollback_deployment(
             namespace=namespace,
-            deployment=pod,
+            deployment=deployment,
             to_revision=int(fix.parameters["to_revision"]),
             correlation_id=correlation_id,
             approval_token=approval_token,
@@ -69,10 +75,13 @@ async def _execute_fix(
         )
 
     if action_type == "scale-deployment":
+        deployment = fix.parameters.get("deployment")
+        if not deployment:
+            raise ValueError("scale-deployment requires parameters['deployment'] (got missing or empty)")
         from src.mcp_server.tools.scale_deployment import scale_deployment  # noqa: PLC0415
         return await scale_deployment(
             namespace=namespace,
-            deployment=pod,
+            deployment=deployment,
             to_replicas=int(fix.parameters["to_replicas"]),
             correlation_id=correlation_id,
             approval_token=approval_token,
@@ -94,7 +103,7 @@ async def _execute_fix(
     raise ValueError(f"Unsupported action_type: {action_type!r}")
 
 
-def _run_async(coro):
+def _run_async(coro: Coroutine[Any, Any, _T]) -> _T:
     """Run a coroutine, creating a new event loop if none is active."""
     try:
         asyncio.get_running_loop()
@@ -112,7 +121,7 @@ def _run_async(coro):
 def _build_failure(
     correlation_id: str,
     fingerprint: str,
-    pre_state: dict,
+    pre_state: dict[str, Any],
     error_msg: str,
     started_at: datetime,
 ) -> WorkflowState:
@@ -136,7 +145,7 @@ def _build_failure(
         finished_at=now,
     )
     logger.error("solver failure corr=%s error=%s", correlation_id, error_msg)
-    return {"solver_run": solver_run}  # type: ignore[return-value]
+    return {"solver_run": solver_run}
 
 
 # ---------------------------------------------------------------------------
@@ -181,8 +190,26 @@ def solver_node(state: WorkflowState) -> WorkflowState:
         fix.target.pod,
     )
 
-    # ---- Issue approval token (short-lived; MCP write tool re-validates) ----
-    token = issue_token(correlation_id=correlation_id, fingerprint=fingerprint)
+    # ---- Read the approval token written into state by callbacks.py ----------
+    # The token was issued at approve-click time, bound to the fingerprint the
+    # user actually saw.  We MUST NOT mint a fresh token here — doing so would
+    # let a mutated ProposedFix slip through without the user's knowledge.
+    token: str = state.get("approval_token", "")
+    if not token:
+        return _build_failure(
+            correlation_id, fingerprint, {},
+            "approval_token missing from state — cannot execute without an "
+            "approval-time token (possible replay or state corruption).",
+            started_at,
+        )
+
+    # Pre-validate before acquiring the lock or touching any Kubernetes API.
+    if not verify_token(token, expected_correlation_id=correlation_id, expected_fingerprint=fingerprint):
+        return _build_failure(
+            correlation_id, fingerprint, {},
+            "approval_token is invalid or expired — failing closed (FR-020).",
+            started_at,
+        )
 
     # ---- Acquire per-target lock (FR-026) -----------------------------------
     with solver_target_lock(fix.target.namespace, fix.target.pod):
@@ -192,16 +219,29 @@ def solver_node(state: WorkflowState) -> WorkflowState:
             )
         except Exception as exc:
             logger.exception("solver execution error corr=%s", correlation_id)
-            return _build_failure(
+            failure_result = _build_failure(
                 correlation_id, fingerprint, {}, str(exc), started_at
             )
+            updated_report = report.model_copy(update={"status": "failed"})
+            try:
+                from src.agent.graph.nodes.reporter import deliver  # noqa: PLC0415
+                _run_async(
+                    deliver(
+                        report=updated_report,
+                        solver_run=failure_result["solver_run"],
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "solver follow-up delivery failed corr=%s", correlation_id
+                )
+            return {  # type: ignore[return-value]
+                "solver_run": failure_result["solver_run"],
+                "report": updated_report,
+            }
 
     # ---- Map WriteToolOutput.outcome → SolverOutcome ------------------------
-    if result.outcome == "applied":
-        solver_outcome = "success"
-    else:
-        # "refused" or "error"
-        solver_outcome = "failure"
+    solver_outcome: SolverOutcome = "success" if result.outcome == "applied" else "failure"
 
     finished_at = datetime.now(tz=timezone.utc)
     solver_run = SolverRun(
@@ -233,7 +273,7 @@ def solver_node(state: WorkflowState) -> WorkflowState:
     except Exception:
         logger.exception("solver follow-up delivery failed corr=%s", correlation_id)
 
-    return {  # type: ignore[return-value]
+    return {
         "solver_run": solver_run,
         "report": updated_report,
     }
