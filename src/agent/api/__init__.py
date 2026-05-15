@@ -119,8 +119,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         # Imported here to avoid circular import (expiry uses graph factory).
         from src.agent.api.expiry import expiry_loop
+        from src.agent.graph.nodes.ingest import run_listener
 
         expiry_task = asyncio.create_task(expiry_loop(graph))
+        listener_task = asyncio.create_task(run_listener(graph, app))
         log.info("agent.startup", phase="ready")
         try:
             yield

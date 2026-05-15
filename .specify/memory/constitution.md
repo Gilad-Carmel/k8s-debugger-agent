@@ -1,362 +1,304 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.0 → 1.1.0
-Bump rationale: MINOR — adds four new engineering-discipline principles
-(VI Code Quality, VII Testing Standards, VIII User Experience
-Consistency, IX Performance Requirements). No existing principle is
-removed or redefined; no governance rule is relaxed. Additive change,
-backward-compatible with v1.0.0 plans and specs.
+Version change: 1.1.0 → 2.0.0
+Bump rationale: MAJOR — the project is being reframed as a hackathon
+build. Four principles from v1.1.0 are removed, governance rules are
+materially relaxed (single-reviewer PRs, no quarterly compliance
+review, CI gates trimmed to a smoke set), and several rigid numeric
+floors (85/95% coverage, p95 latency budget enforcement in CI) are
+dropped. Per the versioning policy, relaxing governance rules and
+redefining principles is MAJOR. Plans written against v1.1.0 are NOT
+automatically compliant with v2.0.0 — their Constitution Check
+sections MUST be re-evaluated against the new six-principle set.
 
 Modified principles:
-  - I. Safety-First Autonomy — unchanged
-  - II. Cost-Conscious by Design — unchanged
-  - III. Developer Experience as a Product — unchanged (scoped to
-    on-call/incident UX; broader cross-surface UX consistency now
-    lives in VIII)
-  - IV. Evidence-Backed Triage (NON-NEGOTIABLE) — unchanged
-  - V. Observability & Reversibility — unchanged
+  - I. Safety-First Autonomy → I. Safety Rails for Live Clusters
+    (NON-NEGOTIABLE). Same blast-radius classification, but the
+    demo cluster is the only deployment target so multi-tenant
+    framing is dropped.
+  - II. Cost-Conscious by Design → folded into VI. Cheap, Cached,
+    and Replayable. Per-tenant ceilings drop; a single per-session
+    ceiling remains.
+  - III. Developer Experience as a Product → folded into I. Demo-
+    First Delivery. The on-call persona is replaced by the judge/
+    teammate persona; latency targets stay but are aspirational,
+    not CI-enforced.
+  - IV. Evidence-Backed Triage → IV. Evidence-Backed Output
+    (NON-NEGOTIABLE). Same rule, smaller scope (the demo path).
+  - V. Observability & Reversibility → V. Replayable Traces.
+    Kill switch and reversal-recipe requirements survive for
+    mutating actions; long-horizon audit retention is dropped.
+
+Removed principles (v1.1.0 → v2.0.0):
+  - VI. Code Quality (formal review/complexity caps removed; a
+    lighter "Pragmatic Quality" rule lives inside III)
+  - VII. Testing Standards (NON-NEGOTIABLE) (coverage floors
+    removed; a slim "test the demo path" rule lives inside III)
+  - VIII. User Experience Consistency (single-surface project; rule
+    no longer load-bearing)
+  - IX. Performance Requirements (DevOps SLOs) (CI-enforced
+    perf budgets removed; latency targets survive as aspirations
+    inside I)
 
 Added principles:
-  - VI. Code Quality
-  - VII. Testing Standards (NON-NEGOTIABLE)
-  - VIII. User Experience Consistency
-  - IX. Performance Requirements (DevOps SLOs)
+  - I. Demo-First Delivery (NON-NEGOTIABLE)
+  - II. Time-Boxed Scope
+  - III. Pragmatic Quality
+  - VI. Cheap, Cached, and Replayable
 
-Added sections: none beyond the four new principles. "Development
-Workflow & Quality Gates" expanded to reference VI–IX in CI gates.
+Net principle count: 9 → 6.
 
-Removed sections: none.
+Added sections: none. "Development Workflow & Quality Gates"
+collapsed into "Hackathon Workflow." "Operational Constraints &
+Compliance Standards" collapsed into "Demo Cluster Constraints."
 
 Templates requiring updates:
-  - ✅ .specify/templates/plan-template.md — "Constitution Check" gate
-    is generic and now enumerates Principles I–IX. Existing plans
-    against v1.0.0 should be re-checked at next edit; no rewrite
-    required.
-  - ✅ .specify/templates/spec-template.md — compatible; specs remain
-    implementation-agnostic. SLO targets (IX) surface in Success
-    Criteria as already practiced.
-  - ✅ .specify/templates/tasks-template.md — compatible; testing,
-    perf, and code-quality tasks fit existing categories (Setup,
-    Foundational, Polish & Cross-Cutting).
+  - ✅ .specify/templates/plan-template.md — "Constitution Check"
+    is generic ("Gates determined based on constitution file") and
+    auto-adapts; no edit required, but plans authored against
+    v1.1.0 MUST re-enumerate Principles I–VI on next edit.
+  - ✅ .specify/templates/spec-template.md — compatible; no
+    principle-specific section to update.
+  - ✅ .specify/templates/tasks-template.md — compatible; the
+    "Tests are OPTIONAL" stance already aligns with the new
+    Pragmatic Quality principle.
   - ✅ .specify/templates/checklist-template.md — compatible.
-  - ⚠ specs/001-log-triage-classifier/ — existing spec predates this
-    amendment. No content changes required (it already meets VII's
-    eval-suite expectations via SC-001 and IX's latency SLOs via
-    SC-002), but the plan generated from it MUST enumerate gates
-    I–IX in its Constitution Check section.
+  - ⚠ specs/001-log-triage-classifier/ and
+    specs/002-routed-triage-workflow/ — both predate this
+    amendment. They remain valid as historical records, but any
+    NEW plan or task generation against them MUST run the
+    Constitution Check against the new six principles. Coverage
+    floors and per-tenant ceilings from v1.1.0 are no longer
+    binding.
+  - ⚠ CLAUDE.md (repo root) — references the v1.1.0 plan and
+    constitution. No edit required for this amendment; rule of
+    deference (CLAUDE.md → constitution) is preserved.
 
-Follow-up TODOs: none. Coverage floors and SLO numbers in VII/IX are
-written as defaults; tighten them per feature in plan.md if needed.
+Follow-up TODOs: none. If the project later returns to a
+production posture, version 3.0.0 should reinstate Principles
+VI–IX from v1.1.0 rather than re-invent them.
 -->
 
 # K8s Debugger Agent Constitution
 
-An Agentic DevOps platform for automated Kubernetes incident triage. This
-constitution defines the non-negotiable rules that govern how the agent
-designs features, ships code, and operates against customer clusters.
+A hackathon build of an agentic Kubernetes triage helper. This
+constitution captures the small set of rules that keep the project
+shippable, demoable, and safe enough to run against a live cluster
+without becoming a process-heavy enterprise codebase.
+
+The audience is a hackathon team and the judges/teammates who will
+watch the demo. Where v1.1.0 optimized for compliance and on-call
+SLOs, v2.0.0 optimizes for a working end-to-end story by the deadline.
 
 ## Core Principles
 
-### I. Safety-First Autonomy
+### I. Demo-First Delivery (NON-NEGOTIABLE)
 
-The agent MUST classify every action by blast radius before executing it:
+The product is the demo. Every increment of work MUST move the
+end-to-end demo path forward or be cut:
 
-- **Read-only** (logs, events, manifests, metrics) — default; no approval
-  required.
-- **Mutating, reversible** (scale a deployment, restart a pod, patch a
-  ConfigMap value the agent itself just changed) — require an explicit,
-  scope-bounded authorization grant and MUST emit a reversal recipe.
-- **Mutating, hard-to-reverse** (delete, drain, evict, force-replace,
-  IAM/RBAC changes, anything against production data) — require a
-  human-in-the-loop confirmation per action, never a blanket grant.
+- The team MUST maintain one named "happy-path script" (a sequence of
+  inputs that produces a triage output the judges will see). That
+  script MUST run green at the end of every working day. If it goes
+  red, fixing it is the next task — feature work pauses.
+- Vertical slices beat horizontal completeness. A thin path through
+  every layer (input → agent → tool call → output) MUST land before
+  any single layer gets polished.
+- Aspirational latency for the live demo: first token in ≤ 5s, final
+  answer in ≤ 60s on the demo cluster. Not CI-enforced; tracked by
+  running the happy-path script and noting the time.
+- Output MUST lead with a TL;DR (root-cause hypothesis + recommended
+  next action). Raw logs and tool dumps are collapsed or linked.
+- Error messages MUST tell the demo operator what to do next, not
+  just what failed. "TODO: handle this" in a user-facing path is a
+  defect during demo week.
 
-Authorization granted for one action does NOT extend to subsequent
-actions. Destructive flags (`--force`, `--cascade`, `--grace-period=0`)
-MUST be surfaced verbatim in the confirmation prompt. The agent MUST
-prefer dry-runs and diff previews before any mutation, and MUST refuse
-to bypass admission controllers, PDBs, or quota guards as a "shortcut."
+**Rationale**: Hackathons are won by teams whose demo runs. A
+beautifully architected codebase with a broken demo loses to a
+scrappy one whose script works on the first try.
 
-**Rationale**: The agent operates against live infrastructure where a
-single wrong `kubectl delete` can cause an outage. Defaulting to
-read-only and gating mutations on explicit, narrow consent is the only
-safe posture; user trust collapses irrecoverably the first time the
-agent breaks prod unprompted.
+### II. Time-Boxed Scope
 
-### II. Cost-Conscious by Design
+Scope is the variable; the deadline is fixed.
 
-Every LLM call, tool invocation, and cluster query has an attributable
-cost and MUST be accounted for:
+- Every task SHOULD carry an explicit time budget (e.g., "≤ 2h").
+  If a task blows past 2× its budget, the team MUST stop and choose:
+  cut scope, swap to a simpler approach, or escalate.
+- "Nice to have" features MUST be tagged as such in tasks.md and
+  MUST NOT block the happy-path script.
+- Refactors that do not unblock the demo are deferred to after the
+  demo. "We'll clean this up post-judging" is a valid answer during
+  hackathon week.
+- The team maintains a single shared cut-list (in `tasks.md` under a
+  "Cut if time runs short" heading). Anything on the cut-list can be
+  dropped without discussion in the last 24 hours.
 
-- The agent MUST select the cheapest model that meets the quality bar
-  for a given step (cheap classifier → mid-tier reasoner → top-tier only
-  when warranted), and MUST justify any escalation in trace metadata.
-- Prompt caching, response caching, and conversation summarization MUST
-  be applied whenever the same context will be reused; uncached repeated
-  context is a defect.
-- Per-incident, per-tenant, and per-session cost ceilings MUST be
-  enforced fail-closed. Exceeding a ceiling halts further spend and
-  surfaces a clear message; it MUST NOT silently degrade output.
-- `$/incident-resolved` and `tokens/incident` are tracked as primary
-  product KPIs, not afterthoughts. Regressions block release.
+**Rationale**: Without explicit time-boxing, every task expands to
+fill the time available and the demo path slips. Naming the
+trade-off up front makes the cut decisions cheap when they need to
+happen fast.
 
-**Rationale**: Agentic systems can burn unbounded spend if every step
-calls the largest model on the full transcript. Treating cost as a
-first-class constraint — not a quarterly cleanup project — is what
-makes the platform economically viable for customers and for us.
+### III. Pragmatic Quality
 
-### III. Developer Experience as a Product
+Quality serves the demo; it is not an end in itself.
 
-The on-call engineer is the customer. Their time and attention budget
-are scarce, and the agent MUST respect them:
+- The project's formatter MUST run before commit. The project's type
+  checker MUST pass on `main`. Both are cheap and prevent the worst
+  classes of last-minute breakage.
+- Tests are written for the happy-path script and for any code that
+  touches Principle V (mutating actions, reversal recipes). Coverage
+  numbers are not tracked.
+- A test that becomes flaky during hackathon week is either fixed
+  immediately or deleted; quarantine queues are out of scope.
+- Single-reviewer PRs are the norm. Self-merge is allowed for
+  hackathon work EXCEPT for changes that touch mutating tools,
+  authorization scope, or this constitution — those require one
+  teammate's eyes.
+- Dead code, commented-out experiments, and `TODO` notes are
+  tolerated on branches and DISCOURAGED on `main`. Cleanups happen
+  in a single "polish pass" before submission, not continuously.
+- No new runtime dependency may be added in the final 24 hours
+  before submission. Earlier than that, vetting is informal
+  (license check + "is it maintained?").
 
-- Every triage output MUST lead with a TL;DR (root cause hypothesis +
-  recommended next action) followed by evidence; raw logs and tool
-  output MUST be collapsed/linked, not pasted inline.
-- First-token latency for interactive triage MUST be under 3 seconds;
-  final-answer latency for a standard triage flow MUST be under 30
-  seconds. Both are tracked and regressions block release.
-- Setup MUST be a single command against a target cluster, with no
-  manual RBAC edits required for the read-only tier.
-- Error messages MUST tell the user what to do next, not just what
-  failed.
+**Rationale**: Strict quality gates that made sense for a long-lived
+production platform become drag in a 48-hour build. Keep the gates
+that catch real breakage (format, type-check, tests on the demo
+path) and drop the ones that are about long-term maintainability.
 
-**Rationale**: An "agentic" tool that produces a 4000-line wall of
-output during an incident is worse than no tool at all. DX is not
-polish — it is the product, because the agent is judged on whether it
-shortens time-to-resolution for a human under stress.
+### IV. Evidence-Backed Output (NON-NEGOTIABLE)
 
-### IV. Evidence-Backed Triage (NON-NEGOTIABLE)
+The agent's outputs MUST be grounded in real cluster observations:
 
-Every diagnostic conclusion the agent surfaces MUST cite the specific
-observation supporting it — a log line, event, metric sample, manifest
-field, or CRD status — with a reference the user can click through to.
+- Every diagnostic claim shown in the demo MUST cite the observation
+  supporting it (a log line, an event, a metric, a manifest field).
+  No citation, no claim.
+- The agent MUST NOT present speculation as fact. Uncertain
+  hypotheses MUST be labeled ("likely", "candidate cause") and
+  ranked.
+- If the agent cannot find evidence, it MUST say so and propose
+  what to inspect next. Inventing plausible-sounding details to
+  make the demo flow nicer is a Sev-1 defect.
+- Hallucinated cluster state caught during dry-runs MUST be fixed
+  before the next dry-run, even if it means cutting a flashy
+  feature from the demo.
 
-- The agent MUST NOT present speculation as fact. Uncertain hypotheses
-  MUST be labeled (e.g., "likely", "candidate cause") and ranked.
-- If the agent cannot find evidence for a claim, it MUST say so and
-  propose what to inspect next, not invent plausible-sounding details.
-- Hallucinated facts about cluster state are treated as Sev-2 defects
-  and require a regression test before close.
+**Rationale**: A judge or teammate who catches the agent inventing a
+log line during the demo will not believe anything else the agent
+says. Evidence is what makes the demo land. This is the one place
+where v1.1.0's rigor stays fully intact.
 
-**Rationale**: Triage tooling that confidently lies destroys trust on
-first contact and causes engineers to chase phantom causes during real
-outages. Citations make the agent auditable and make hallucination
-detectable in CI rather than in production.
+### V. Replayable Traces
 
-### V. Observability & Reversibility
-
-Every agent decision and action MUST be reconstructable after the fact:
+Anything the agent does against the cluster MUST be reconstructable
+afterward, both for the post-demo post-mortem and to debug
+mid-hackathon failures fast:
 
 - All prompts, tool calls, tool results, and final outputs MUST be
-  logged with a correlation ID linking them to the triggering incident
-  and the operating user/tenant.
+  logged with a single correlation ID per triage run.
 - Every mutating action MUST log: the pre-state, the action issued,
-  the post-state, and a reversal recipe (the inverse command or
-  manifest) sufficient for a human to undo it.
-- Audit logs MUST be retained per the tenant's compliance tier and MUST
-  NOT be silently truncated; truncation is an incident.
-- The platform MUST expose a "kill switch" that halts all in-flight
-  agent actions for a tenant within 5 seconds.
+  the post-state, and a one-line reversal recipe (the inverse
+  command or manifest) for a human to undo it.
+- A "kill switch" command MUST exist that halts the agent's in-flight
+  actions within ~5 seconds. The team MUST know how to invoke it
+  during the demo.
+- Long-horizon audit retention, compliance tiers, and per-tenant
+  partitioning are out of scope. One log file per run, kept until
+  submission, is sufficient.
 
-**Rationale**: Autonomous systems acting on production require an
-audit trail strong enough to answer "what did the agent do, why, and
-how do I undo it?" — both for incident review and for regulatory
-scrutiny. Reversibility is not optional when the agent has write
-access.
+**Rationale**: When the demo breaks at 2am, the team's only debugger
+is the trace. When the demo runs against a real cluster, the team's
+only undo button is the reversal recipe. Both are cheap to add up
+front and very expensive to retrofit.
 
-### VI. Code Quality
+### VI. Cheap, Cached, and Replayable
 
-The platform's code is read more often than it is written and is
-operated under incident pressure. It MUST stay legible, type-safe,
-and free of dead weight:
+LLM and tool spend is bounded by a single project budget, not by
+per-tenant ceilings:
 
-- Every change MUST pass the project's linter and formatter in CI;
-  disabling rules in-line requires a comment naming the reason and
-  is reviewed.
-- The language's static type checker MUST run in CI at the strictest
-  practical setting; `any` / unchecked escape hatches require an
-  inline justification.
-- Cyclomatic complexity for any single function MUST stay under 15;
-  exceeding it requires a refactor or an explicit waiver in PR.
-- Dead code, commented-out blocks, and "TODO" markers without a
-  linked issue MUST NOT land on `main`.
-- Every PR requires at least one human reviewer (two for changes
-  touching mutating tools, authorization scope, model dependencies,
-  or this constitution). Self-approval is not permitted on `main`.
-- New runtime dependencies MUST be vetted for license, maintenance
-  signal (recent commits, open security advisories), and supply-chain
-  posture; the vetting result is recorded in the PR.
-- Public functions and exported types MUST have a one-line purpose
-  comment when intent is not obvious from the name. Internal code
-  follows the "no comments unless the WHY is non-obvious" rule from
-  the project's collaborator guide.
+- The team MUST set a single per-session token/$ ceiling (a number
+  agreed up front; the project agent halts further spend when
+  reached). Exceeding the ceiling halts the run with a clear
+  message; it MUST NOT silently degrade output.
+- Default to the cheapest model that passes the happy-path script.
+  Escalation to a larger model is recorded in the trace and MUST be
+  justified ("classifier failed eval N times in a row" is enough).
+- Prompt caching and response caching MUST be applied whenever the
+  same context is re-used during the demo loop. Uncached repeated
+  context is a defect because it makes the demo slow AND expensive.
+- Tool calls MUST honor rate-limit backpressure and retry with
+  bounded, jittered backoff. Unbounded retries that drain the
+  budget mid-demo are a defect.
+- Recorded fixtures of the demo cluster MAY be replayed during
+  development to avoid spending real tokens; the fixture MUST be
+  refreshed before the final dry-run.
 
-**Rationale**: An agentic platform that mutates production needs to
-be auditable by humans under stress. Sloppy code that "works" is a
-liability — when something goes wrong, the people reading it have
-seconds, not afternoons.
+**Rationale**: Three things share the same root: keeping spend under
+control, keeping demo latency low, and being able to iterate
+offline when the cluster or LLM API is flaky. Caching and replay
+fixtures buy all three at once.
 
-### VII. Testing Standards (NON-NEGOTIABLE)
+## Demo Cluster Constraints
 
-Tests are how we keep the safety, cost, and evidence guarantees
-honest. They are not optional:
+- **Default posture**: The demo cluster credentials are read-only.
+  Write access is enabled per-action, never as a blanket grant.
+- **Secret & PII handling**: Secrets, tokens, and any PII visible in
+  cluster state MUST be redacted before any LLM call. Redaction is
+  applied at the tool boundary, not relied on as a model behavior.
+  Leaking real secrets into a prompt during a public demo is the
+  worst possible failure mode.
+- **Mutating actions on the demo cluster**: Allowed for the
+  "reversible" tier (scale, restart, patch values the agent just
+  set). Forbidden for the "hard-to-reverse" tier (delete, drain,
+  evict, force-replace, IAM/RBAC) without explicit teammate
+  confirmation per action.
+- **Supported surface**: Kubernetes API only. No `kubectl exec`
+  into workloads without explicit per-action approval.
+- **Model selection**: Default to the smallest model that passes
+  the happy-path script. Record escalations in the trace.
 
-- Every public function, tool boundary, and decision rule MUST have
-  unit tests. Pure-logic modules MUST hit at least 85% line and
-  branch coverage; safety-critical modules (authorization, mutation
-  gating, secret redaction, cost ceiling enforcement) MUST hit 95%
-  and MUST include negative-path tests.
-- Every integration with an external system (Kubernetes, MCP, LLM
-  provider, observability backend) MUST have contract tests against
-  a recorded or sandboxed fixture. The fixture MUST be refreshed on a
-  documented cadence.
-- LLM-driven behaviors MUST have an eval suite (a golden set of
-  labeled inputs with expected outputs and acceptable variance).
-  The eval suite runs in CI; regressions block merge.
-- Hallucination tests are mandatory for any feature that surfaces a
-  classification, recommendation, or summary derived from an LLM.
-  A claim emitted without supporting evidence is a test failure.
-- New mutating tools MUST ship with at least one refusal-path test
-  (asserting the tool refuses without authorization) and at least
-  one reversal-recipe test (asserting the recipe undoes the change
-  on a fixture).
-- Flaky tests are tracked, quarantined within 24 hours of detection,
-  and fixed or deleted within one sprint. Quarantined tests MUST NOT
-  silently mask real regressions.
-- Tests MUST NOT mock the system under test; mock only the
-  collaborators across a process or network boundary.
+## Hackathon Workflow
 
-**Rationale**: Without strong testing, the safety, evidence, and
-cost principles become aspirational. The cost of a missed test is
-borne by customers during outages — far more expensive than the test.
-
-### VIII. User Experience Consistency
-
-The platform speaks to humans across multiple surfaces (chat, CLI,
-web, API). Those surfaces MUST present the same product, not three
-different products:
-
-- Triage outputs MUST share a single canonical schema (top label,
-  confidence, cited evidence, runner-ups, caveats). Channel-specific
-  rendering is allowed; the underlying fields are not.
-- Labels, severities, and units MUST be drawn from a single shared
-  vocabulary. Mixing `error` / `failed` / `failure` for the same
-  state is a defect.
-- Error messages MUST follow a single template: what failed, why,
-  what to try next. Stack traces are not user-facing output.
-- The same triage request issued against the same state MUST produce
-  the same shape and ordering of fields across surfaces, even if
-  prose differs.
-- Times, durations, byte sizes, and money values MUST use the
-  product-wide formatting standard. ISO-8601 for timestamps, IEC
-  binary prefixes for bytes (KiB, MiB), no surface-specific
-  variants.
-- Net-new user-facing strings MUST go through the shared
-  copy/i18n surface; ad-hoc inline strings on individual surfaces
-  are a defect.
-
-**Rationale**: When an engineer hits the platform during an incident,
-inconsistent labels and shapes across surfaces cost trust and time.
-Consistency lets users learn the product once and apply it
-everywhere, which is a force-multiplier on Principle III.
-
-### IX. Performance Requirements (DevOps SLOs)
-
-DevOps tooling is judged on latency under pressure. Performance is
-a first-class engineering discipline with explicit SLOs and
-enforced budgets:
-
-- Every user-facing flow MUST declare SLOs for: (a) time-to-first-
-  token (or first-meaningful-byte), (b) end-to-end p50 and p95
-  latency, (c) per-flow cost ceiling. Defaults: TTFT ≤ 3s, p50 ≤ 30s,
-  p95 ≤ 60s for interactive triage; tighter per-feature targets are
-  encouraged in the relevant plan.
-- Performance budgets MUST be enforced in CI on a representative
-  benchmark fixture. Regressions beyond the budget block merge; an
-  override requires a documented justification in the PR and a
-  follow-up issue.
-- Tool calls to external systems (K8s API, MCP, LLM) MUST honor
-  rate-limit backpressure and MUST retry with bounded, jittered
-  backoff. Unbounded retries are a defect.
-- Memory and concurrency budgets MUST be declared for any service
-  exposed to user load; OOMs and unbounded fan-out are defects.
-- Hot paths MUST be profilable in production via the shared
-  observability stack; "we'll add profiling later" is not acceptable
-  for code shipping to production.
-- Data freshness SLOs MUST be declared for any cached or summarized
-  cluster state surfaced to users. Stale data MUST be labeled with
-  its age.
-
-**Rationale**: An on-call engineer waiting 90 seconds for triage is
-no longer triaging — they are debugging the tool. Treating
-performance as an SLO with CI enforcement, not as a polish item,
-is what keeps the platform usable when it matters most.
-
-## Operational Constraints & Compliance Standards
-
-- **Default posture**: Production cluster credentials are read-only.
-  Write access is per-tenant opt-in and per-action scoped.
-- **Secret & PII handling**: Secrets, tokens, and customer PII MUST be
-  redacted before any LLM call. Redaction MUST be applied at the tool
-  boundary, not relied upon as a model behavior. Unredacted data in a
-  prompt is a Sev-1 defect.
-- **Tenant isolation**: Prompts, caches, embeddings, and traces MUST be
-  partitioned per tenant. Cross-tenant data leakage is a Sev-1 defect.
-- **Cost ceilings**: Per-session and per-tenant token/$ ceilings are
-  enforced fail-closed (see Principle II).
-- **Supported surfaces**: Kubernetes 1.27+ via the Kubernetes API; no
-  direct `kubectl exec` into customer workloads without explicit per-
-  action approval.
-- **Model selection**: Default to the smallest model that passes the
-  task's eval bar; escalation MUST be recorded in the trace.
-
-## Development Workflow & Quality Gates
-
-- **Constitution Check (gate)**: Every `/speckit-plan` MUST include a
-  Constitution Check section that enumerates Principles I–IX and states,
-  for each, either "compliant" or "violation + justification." Plans
-  with unjustified violations MUST NOT proceed to `/speckit-tasks`.
-- **Reviews**: All PRs require at least one human reviewer (Principle
-  VI). PRs that introduce a new mutating tool, a new model dependency,
-  or a change to authorization scope require a second reviewer from the
-  safety owners.
-- **CI gates**: Builds MUST fail on:
-  - (a) cost regression beyond the per-flow budget (Principle II);
-  - (b) latency regression beyond the budgeted p95 (Principle IX);
-  - (c) missing audit log entries in integration tests for any mutating
-    action (Principle V);
-  - (d) eval-suite or hallucination-benchmark regressions
-    (Principles IV and VII);
-  - (e) coverage drop below the per-module floor — 85% pure logic, 95%
-    safety-critical (Principle VII);
-  - (f) linter, formatter, or strict-type-check failures (Principle VI);
-  - (g) introduction of a user-facing string outside the shared
-    copy/i18n surface or use of a label outside the shared vocabulary
-    (Principle VIII).
-- **New mutating tool checklist**: kill switch wired, reversal recipe
-  emitted, integration test covering both happy-path and refusal-path,
-  cost and latency budgets declared, eval entry added if LLM-backed.
-- **Documentation**: Public behavior changes MUST update the relevant
-  spec under `specs/` and the user-facing changelog in the same PR.
+- **Constitution Check (gate)**: Every `/speckit-plan` MUST include
+  a Constitution Check section that enumerates Principles I–VI and
+  states, for each, "compliant" or "violation + justification." A
+  plan with unjustified violations MUST NOT proceed to
+  `/speckit-tasks`. Plans MAY explicitly note "N/A for hackathon
+  scope" against a principle where the rule is irrelevant to the
+  feature (e.g., Principle V on a read-only-only feature).
+- **Reviews**: Single-reviewer PRs are the norm. PRs that touch
+  mutating tools, authorization scope, or this constitution require
+  one additional teammate's review.
+- **CI gates** (kept intentionally lean):
+  - (a) formatter clean and strict type-check passes (Principle III);
+  - (b) the happy-path script runs green (Principles I and IV);
+  - (c) any test that covers a mutating tool or its reversal recipe
+    runs green (Principles III and V);
+  - (d) the per-session cost ceiling is not exceeded by the
+    happy-path script's recorded run (Principle VI).
+- **New mutating tool checklist**: kill switch wired, reversal
+  recipe emitted, happy-path covers both a success and a refusal
+  case, cost noted in the trace.
+- **Documentation**: The demo script (`quickstart.md` or equivalent)
+  is the single source of truth for "how to demo this." It MUST
+  stay current; if the demo script is stale, the demo will fail.
 
 ## Governance
 
-This constitution supersedes any other practice, style guide, or
-informal convention within the project. When in conflict, this
-document wins; the conflicting practice MUST be updated or removed.
+This constitution supersedes any other practice within the project
+during hackathon week. When in conflict, this document wins; the
+conflicting practice MUST be updated or removed.
 
 **Amendments**:
 
 - Proposed via PR that edits this file. The PR description MUST
-  include: the version bump and its rationale (MAJOR/MINOR/PATCH),
-  the list of changed principles, and a migration note for any
-  in-flight features affected.
-- Requires approval from two maintainers, at least one of whom is a
-  designated safety owner.
+  include the version bump and its rationale (MAJOR/MINOR/PATCH)
+  and the list of changed principles.
+- Requires approval from one teammate. (Pre-hackathon and
+  post-hackathon, return to the v1.1.0 two-reviewer rule.)
 - On merge, the Sync Impact Report at the top of this file MUST be
-  refreshed and dependent templates under `.specify/templates/`
-  reviewed in the same PR.
+  refreshed.
 
 **Versioning policy** (semantic):
 
@@ -367,12 +309,13 @@ document wins; the conflicting practice MUST be updated or removed.
 - **PATCH**: Clarifications, wording fixes, or non-semantic
   refinements.
 
-**Compliance review**: A quarterly review MUST audit a sample of
-recent incidents, PRs, and audit traces against Principles I–V.
-Findings are tracked as issues and triaged within one sprint.
+**Compliance review**: A single end-of-hackathon retrospective MUST
+audit the recorded traces of the demo run against Principles I, IV,
+and V. Findings go into a "lessons learned" doc; there is no
+quarterly cadence during hackathon scope.
 
 **Runtime guidance**: Day-to-day development guidance for AI
 collaborators lives in `CLAUDE.md` at the repo root; it MUST defer
 to this constitution on any conflict.
 
-**Version**: 1.1.0 | **Ratified**: 2026-05-14 | **Last Amended**: 2026-05-14
+**Version**: 2.0.0 | **Ratified**: 2026-05-14 | **Last Amended**: 2026-05-15

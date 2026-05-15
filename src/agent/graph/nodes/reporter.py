@@ -12,7 +12,6 @@ Task:      T051 (initial), T084 (solver follow-up extension)
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -34,7 +33,6 @@ from src.shared.schemas import (
 
 logger = logging.getLogger(__name__)
 
-SLACK_MOCK_URL = os.getenv("SLACK_MOCK_URL", "http://localhost:8090")
 SLACK_CHANNEL = os.getenv("SLACK_CHANNEL", "#k8s-incidents")
 TENANT_ID = os.getenv("TENANT_ID", "dev")
 APPROVAL_WINDOW_MINUTES = int(os.getenv("APPROVAL_WINDOW_MINUTES", "30"))
@@ -42,7 +40,6 @@ APPROVAL_WINDOW_MINUTES = int(os.getenv("APPROVAL_WINDOW_MINUTES", "30"))
 _DOMAIN_ICON: dict[str, str] = {
     "Application": "⚙️",
     "Network": "🌐",
-    "Database": "🗄️",
     "Unknown": "❓",
 }
 
@@ -318,8 +315,15 @@ def build_message_body(
         else None,
     }
 
+    body: dict[str, Any] = {
+        "correlation_id": report.correlation_id,
+        "channel": SLACK_CHANNEL,
+        "report": report_sidecar,
+        "blocks": blocks,
+    }
+
     if solver_run:
-        report_sidecar["solver_result"] = {
+        body["solver_result"] = {
             "outcome": solver_run.outcome,
             "reversal_recipe": {
                 "description": solver_run.reversal_recipe.description,
@@ -331,25 +335,38 @@ def build_message_body(
             "error": solver_run.error,
         }
 
-    return {
-        "correlation_id": report.correlation_id,
-        "channel": SLACK_CHANNEL,
-        "report": report_sidecar,
-        "blocks": blocks,
-    }
+    return body
 
 
-async def deliver(
+async def chat_deliver(
     report: Report,
     solver_run: SolverRun | None = None,
 ) -> tuple[str, str]:
     """
-    POST the report (or follow-up) to the Slack surface.
+    POST the report to each configured chat surface.
 
-    Returns (delivered_at_iso, message_id).
-    Raises httpx.HTTPError on delivery failure; callers MUST handle and
-    persist a delivery-failed audit row (FR-014, slack_mock.md §Failure handling).
+    Returns the most recently observed (delivered_at_iso, message_id) from successful deliveries.
+    Raises when chat surface configuration is invalid or when all deliveries fail.
     """
+    from src.agent.settings import settings
+
+    surface = settings.chat_surface
+    valid_surfaces = {"slack", "discord", "all"}
+    if surface not in valid_surfaces:
+        raise ValueError(f"Invalid chat_surface={surface!r}. Expected one of: slack, discord, all.")
+
+    targets: list[tuple[str, str]] = []
+    if surface in ("slack", "all"):
+        slack_url = (settings.slack_mock_url or "").strip()
+        if slack_url:
+            targets.append(("slack", slack_url))
+    if surface in ("discord", "all"):
+        discord_url = (settings.discord_bot_url or "").strip()
+        if discord_url:
+            targets.append(("discord", discord_url))
+    if not targets:
+        raise RuntimeError("No chat delivery targets configured.")
+
     if solver_run:
         blocks = build_followup_blocks(report, solver_run)
     else:
@@ -358,26 +375,41 @@ async def deliver(
     body = build_message_body(report, blocks, solver_run)
     body_bytes = json.dumps(body, default=str).encode()
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(
-            f"{SLACK_MOCK_URL}/messages",
-            content=body_bytes,
-            headers={
-                "Content-Type": "application/json",
-                "X-Tenant-Id": TENANT_ID,
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    delivered_at = datetime.now(timezone.utc).isoformat()
+    message_id = "unknown"
+    last_exc: Exception | None = None
 
-    delivered_at: str = data.get("delivered_at", datetime.now(timezone.utc).isoformat())
-    message_id: str = data.get("message_id", "unknown")
-    logger.info(
-        "report delivered corr=%s message_id=%s solver=%s",
-        report.correlation_id,
-        message_id,
-        solver_run is not None,
-    )
+    delivered = False
+    for target_name, url in targets:
+        try:
+            headers: dict[str, str] = {"Content-Type": "application/json"}
+            if target_name == "slack":
+                headers["X-Tenant-Id"] = TENANT_ID
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(
+                    f"{url}/messages",
+                    content=body_bytes,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                delivered_at = data.get("delivered_at", delivered_at)
+                message_id = data.get("message_id", message_id)
+                delivered = True
+                logger.info(
+                    "report delivered corr=%s surface=%s solver=%s",
+                    report.correlation_id, url, solver_run is not None,
+                )
+        except Exception as exc:
+            logger.warning("delivery failed url=%s corr=%s: %s", url, report.correlation_id, exc)
+            last_exc = exc
+
+    if not delivered:
+        if last_exc is None:
+            logger.error("chat delivery ended without success or captured exception corr=%s", report.correlation_id)
+            raise RuntimeError(f"No successful chat deliveries to {len(targets)} target(s).")
+        raise last_exc
+
     return delivered_at, message_id
 
 
@@ -404,8 +436,10 @@ def make_report(
         runner_up_domains=list(routing.runners_up),
     )
 
-def reporter_node(state: WorkflowState) -> WorkflowState:
+async def reporter_node(state: WorkflowState) -> WorkflowState:
     """Assemble and deliver the report, returning the report field in state."""
+    from src.agent.db import set_proposed_fix_fingerprint
+
     correlation_id = state["correlation_id"]
     routing = state["routing"]
     diagnosis = state.get("diagnosis")
@@ -418,25 +452,34 @@ def reporter_node(state: WorkflowState) -> WorkflowState:
         delivered_at=tentative_delivered_at,
     )
 
-    try:
-        # Presence check only: RuntimeError means there is no running loop.
-        asyncio.get_running_loop()
-        logger.warning(
-            "report delivery skipped corr=%s reason=running_event_loop",
-            correlation_id,
-        )
-    except RuntimeError:
-        try:
-            delivered_at_iso, _ = asyncio.run(deliver(report))
-            delivered_at = datetime.fromisoformat(delivered_at_iso.replace("Z", "+00:00"))
-            report = report.model_copy(
-                update={
-                    "delivered_at": delivered_at,
-                    "approval_deadline": delivered_at + timedelta(minutes=APPROVAL_WINDOW_MINUTES),
-                }
-            )
-        except Exception:
-            logger.exception("report delivery failed corr=%s", correlation_id)
-            report = report.model_copy(update={"status": "failed"})
+    if report.proposed_fix:
+        await set_proposed_fix_fingerprint(correlation_id, report.proposed_fix.fingerprint)
 
-    return {"report": report}
+    try:
+        delivered_at_iso, _ = await chat_deliver(report)
+        delivered_at = datetime.fromisoformat(delivered_at_iso.replace("Z", "+00:00"))
+        report = report.model_copy(
+            update={
+                "delivered_at": delivered_at,
+                "approval_deadline": delivered_at + timedelta(minutes=APPROVAL_WINDOW_MINUTES),
+            }
+        )
+    except Exception:
+        logger.exception("report delivery failed corr=%s", correlation_id)
+        report = report.model_copy(update={"status": "failed"})
+
+    return {"report": report}  # type: ignore[return-value]
+
+
+async def reporter_followup_node(state: WorkflowState) -> WorkflowState:
+    """Deliver the solver result back to the chat surface after solver runs."""
+    report = state["report"]
+    solver_run = state.get("solver_run")
+    if solver_run is None:
+        return {}  # type: ignore[return-value]
+    try:
+        await chat_deliver(report, solver_run)
+        logger.info("solver follow-up delivered corr=%s", report.correlation_id)
+    except Exception:
+        logger.exception("solver follow-up delivery failed corr=%s", report.correlation_id)
+    return {}  # type: ignore[return-value]

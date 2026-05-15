@@ -3,8 +3,8 @@ src/agent/graph/nodes/experts/_base.py
 
 Shared Expert protocol and prompt-builder — T047.
 
-Provides all domain-agnostic infrastructure used by the three Expert nodes
-(Application, Network, Database):
+Provides all domain-agnostic infrastructure used by the Expert nodes
+(Application, Network):
 
   - Module-level utilities: ``format_evidence``, ``format_router_context``,
     ``build_expert_llm``, ``validate_action``, ``resolve_target``.
@@ -266,15 +266,22 @@ def validate_action(
 
 
 def resolve_target(state: WorkflowState) -> Target:
-    """Return the Target from state.incident, or a safe placeholder.
+    """Return the Target from state.incident, alert_payload, or a safe placeholder.
 
-    Missing incident is anomalous but we degrade gracefully rather than
-    raising — the on-call still gets a diagnosis, just with a placeholder
-    target they can validate.
+    Webhook-triggered runs set alert_payload but not incident; listener-triggered
+    runs set incident directly.  Both paths are checked before falling back to
+    the placeholder so the Expert always proposes the correct target.
     """
     incident = state.get("incident")
     if incident is not None:
         return incident.target
+    alert_payload = state.get("alert_payload")
+    if alert_payload is not None:
+        labels = alert_payload.get("groupLabels", {})
+        namespace = labels.get("namespace", "default")
+        pod = labels.get("pod", "unknown-pod")
+        if namespace and pod and pod != "unknown-pod":
+            return Target(namespace=namespace, pod=pod)
     return Target(namespace="default", pod="unknown-pod")
 
 
@@ -283,12 +290,15 @@ def resolve_target(state: WorkflowState) -> Target:
 # ---------------------------------------------------------------------------
 
 class BaseExpert(ABC):
-    """Abstract base for Application / Network / Database Expert nodes.
+    """Abstract base for Application / Network Expert nodes.
 
     Subclass contract:
       - Set ``domain`` (class variable) to one of the ``Domain`` literals.
       - Set ``_system_prompt`` (class variable) to the domain-specific prompt
         string that enforces Constitution IV and catalog-bounded actions.
+      - Optionally narrow ``_allowed_actions`` (class variable) to a subset of
+        ``ACTION_TYPES`` if the domain is not allowed to propose every catalog
+        entry at MVP (see spec 007 FR-011 for the Network case).
       - Implement ``_stub_diagnosis`` as a hard-coded fallback used by
         scaffolding runs and unit tests that bypass the LLM call.
 
@@ -300,6 +310,15 @@ class BaseExpert(ABC):
 
     domain: ClassVar[Domain]
     _system_prompt: ClassVar[str] = ""  # subclasses MUST override (T049/T050 pending)
+
+    # Per-domain action subset. Default = the full catalog; a subclass narrows
+    # this when its domain is restricted to a subset (e.g. spec 007 FR-011
+    # restricts the Network expert to {restart-pod, rollback-deployment} for
+    # MVP). The runtime filter in _run_real_diagnosis enforces this *after*
+    # the catalog-wide validate_action(), so prompt-only escapes (a drifted /
+    # jailbroken model that emits an out-of-subset action) are caught before
+    # any Approve button is surfaced (Principle I — Safety-First Autonomy).
+    _allowed_actions: ClassVar[frozenset[str]] = ACTION_TYPES
 
     # ------------------------------------------------------------------
     # LangGraph entry point
@@ -496,6 +515,24 @@ class BaseExpert(ABC):
         action_str = None if force_low_confidence else parsed.proposed_action
         params_in = {} if force_low_confidence else parsed.proposed_parameters
         validated_action, validated_params = validate_action(action_str, params_in)
+
+        # Per-domain action subset enforcement (spec 007 FR-011, Principle I).
+        # validate_action() guarantees the action is in the catalog; this
+        # second gate narrows the catalog to the subset this domain is
+        # permitted to propose. A drifted or jailbroken model that emits an
+        # out-of-subset catalog action (e.g. the Network expert returning
+        # "scale-deployment") is caught here — BEFORE the Reporter surfaces
+        # an Approve button — and the proposed fix is dropped.
+        if validated_action is not None and validated_action not in self._allowed_actions:
+            logger.warning(
+                "%s_expert proposed catalog action %r which is not in the "
+                "per-domain allowed set %r; dropping fix.",
+                self.domain.lower(),
+                validated_action,
+                sorted(self._allowed_actions),
+            )
+            validated_action = None
+            validated_params = {}
 
         proposed_fix: Optional[ProposedFix] = None
         if validated_action is not None:

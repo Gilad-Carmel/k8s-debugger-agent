@@ -100,12 +100,23 @@ class AgentSettings(BaseSettings):
         description="Shared secret for verifying Alertmanager webhook HMAC signatures.",
     )
     slack_mock_secret: str = Field(
-        default="dev-slack-secret",
-        description="HMAC secret used to sign /callbacks/slack payloads.",
+        default="dev-mock-secret",
+        description="HMAC secret used to sign /callbacks/slack payloads. Must match SLACK_MOCK_SECRET in the Discord bot.",
     )
     slack_mock_url: str = Field(
-        default="http://localhost:9000",
+        default="http://localhost:8090",
         description="URL of the mock-Slack receiver service.",
+    )
+    discord_bot_url: str = Field(
+        default="http://localhost:8091",
+        description="URL of the Discord bot HTTP receiver (POST /messages).",
+    )
+    chat_surface: str = Field(
+        default="slack",
+        description=(
+            "Which chat surface(s) to deliver reports to. "
+            "Values: 'slack' | 'discord' | 'all'."
+        ),
     )
 
     # ------------------------------------------------------------------
@@ -129,11 +140,46 @@ class AgentSettings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
+    # Proactive log listener (feature 005-router-listener)
+    # Instead of waiting for Alertmanager webhooks, the listener polls
+    # MCP search_pod_logs continuously and fires the triage graph whenever
+    # error patterns are detected.
+    # ------------------------------------------------------------------
+    watch_namespaces: str = Field(
+        default="default",
+        description=(
+            "Comma-separated Kubernetes namespaces to poll for error logs. "
+            "Example: 'default,production,staging'."
+        ),
+    )
+    poll_interval_seconds: int = Field(
+        default=30,
+        description="Seconds between listener poll cycles.",
+    )
+    listener_lookback_minutes: int = Field(
+        default=5,
+        description="How many minutes back each poll looks for error log matches.",
+    )
+
+    @property
+    def watch_namespace_list(self) -> list[str]:
+        """Parsed list of namespaces to watch."""
+        return [ns.strip() for ns in self.watch_namespaces.split(",") if ns.strip()]
+
+    # ------------------------------------------------------------------
     # Backward-compatibility properties for the webhook / HITL / persistence
     # call sites that pre-date the rename. Read-only EXCEPT SQLITE_PATH
     # (writable so per-test fixtures can point at a tmp file).
     # New code should use the lower_case names directly.
     # ------------------------------------------------------------------
+    @property
+    def DISCORD_BOT_URL(self) -> str:  # noqa: N802
+        return self.discord_bot_url
+
+    @property
+    def CHAT_SURFACE(self) -> str:  # noqa: N802
+        return self.chat_surface
+
     @property
     def ALERTMANAGER_HMAC_SECRET(self) -> str:  # noqa: N802
         return self.alertmanager_hmac_secret

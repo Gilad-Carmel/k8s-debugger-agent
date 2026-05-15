@@ -29,11 +29,18 @@ services:
       - triage
     volumes:
       - sqlite_data:/app/data
+      - ./kubeconfig-docker.yaml:/root/.kube/config:ro
     env_file:
       - dev.env
     environment:
       SQLITE_PATH: /app/data/agent.sqlite3
       SLACK_MOCK_URL: http://slack-mock:8090
+      KUBECONFIG: /root/.kube/config
+      WATCH_NAMESPACES: demo
+      POLL_INTERVAL_SECONDS: "4"
+      LISTENER_LOOKBACK_MINUTES: "5"
+      DISCORD_BOT_URL: http://discord-bot:8091
+      CHAT_SURFACE: "${CHAT_SURFACE:-slack}"
     extra_hosts:
       # So LLM_BASE_URL=http://host.docker.internal:11434/v1 works on Linux.
       - "host.docker.internal:host-gateway"
@@ -61,6 +68,26 @@ services:
       AGENT_URL: http://agent:8080
       AGENT_CALLBACK_URL: http://agent:8080
       SLACK_MOCK_PORT: "8090"
+    depends_on:
+      agent:
+        condition: service_started
+    restart: unless-stopped
+
+  discord-bot:
+    build:
+      context: ..
+      dockerfile: deploy/discord_bot/Dockerfile
+    ports:
+      - "8091:8091"
+    networks:
+      - triage
+    env_file:
+      - dev.env
+    environment:
+      AGENT_URL: http://agent:8080
+      BOT_PORT: "8091"
+      DISCORD_TOKEN: "${DISCORD_TOKEN:-}"
+      DISCORD_CHANNEL_ID: "${DISCORD_CHANNEL_ID:-}"
     depends_on:
       agent:
         condition: service_started

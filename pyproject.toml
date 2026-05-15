@@ -50,6 +50,7 @@ dev = [
     "pytest-cov",
     # Dev utilities (scripts/check_openrouter.py)
     "python-dotenv",
+    "asgi-lifespan>=2.1.0",
 ]
 
 [build-system]

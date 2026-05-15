@@ -1,3 +1,4 @@
+
 """
 src/agent/graph/nodes/solver.py
 
@@ -223,18 +224,6 @@ def solver_node(state: WorkflowState) -> WorkflowState:
                 correlation_id, fingerprint, {}, str(exc), started_at
             )
             updated_report = report.model_copy(update={"status": "failed"})
-            try:
-                from src.agent.graph.nodes.reporter import deliver  # noqa: PLC0415
-                _run_async(
-                    deliver(
-                        report=updated_report,
-                        solver_run=failure_result["solver_run"],
-                    )
-                )
-            except Exception:
-                logger.exception(
-                    "solver follow-up delivery failed corr=%s", correlation_id
-                )
             return {  # type: ignore[return-value]
                 "solver_run": failure_result["solver_run"],
                 "report": updated_report,
@@ -264,14 +253,8 @@ def solver_node(state: WorkflowState) -> WorkflowState:
         solver_run.reversal_recipe.description,
     )
 
-    # ---- Deliver Slack follow-up (T084) -------------------------------------
     new_status = "executed" if solver_outcome == "success" else "failed"
     updated_report = report.model_copy(update={"status": new_status})
-    try:
-        from src.agent.graph.nodes.reporter import deliver  # noqa: PLC0415
-        _run_async(deliver(report=updated_report, solver_run=solver_run))
-    except Exception:
-        logger.exception("solver follow-up delivery failed corr=%s", correlation_id)
 
     return {
         "solver_run": solver_run,
