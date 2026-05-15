@@ -76,7 +76,7 @@ async def save_incident(
     async with get_conn() as conn:
         await conn.execute(
             """
-            INSERT OR IGNORE INTO incidents (
+            INSERT OR REPLACE INTO incidents (
                 correlation_id, dedup_fingerprint, source_alert_id,
                 namespace, pod, status, received_at, last_seen_at, approval_deadline
             ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)

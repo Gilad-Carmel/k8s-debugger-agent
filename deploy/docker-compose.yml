@@ -40,7 +40,7 @@ services:
       POLL_INTERVAL_SECONDS: "4"
       LISTENER_LOOKBACK_MINUTES: "5"
       DISCORD_BOT_URL: http://discord-bot:8091
-      CHAT_SURFACE: "${CHAT_SURFACE:-slack}"
+      CHAT_SURFACE: discord
     extra_hosts:
       # So LLM_BASE_URL=http://host.docker.internal:11434/v1 works on Linux.
       - "host.docker.internal:host-gateway"
@@ -86,8 +86,6 @@ services:
     environment:
       AGENT_URL: http://agent:8080
       BOT_PORT: "8091"
-      DISCORD_TOKEN: "${DISCORD_TOKEN:-}"
-      DISCORD_CHANNEL_ID: "${DISCORD_CHANNEL_ID:-}"
     depends_on:
       agent:
         condition: service_started
