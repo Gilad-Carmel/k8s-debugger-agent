@@ -38,17 +38,29 @@ from langgraph.graph import END, START, StateGraph
 from src.agent.graph.nodes.experts.application import application_expert_node
 from src.agent.graph.nodes.experts.network import network_expert_node
 from src.agent.graph.nodes.ingest import ingest_node
-from src.agent.graph.nodes.reporter import reporter_node
+from src.agent.graph.nodes.reporter import reporter_followup_node, reporter_node
 from src.agent.graph.nodes.router import route_after_router, router_node
 from src.agent.graph.nodes.solver import solver_node
 from src.agent.graph.state import WorkflowState
 
 
 def _route_after_reporter(state: WorkflowState) -> str:
-    """Post-interrupt edge: only APPROVED proceeds to the Solver."""
-    if state.get("approval_status") == "APPROVED":
+    """Route reporter → solver or END.
+
+    First pass (no approval_status): route to solver if a fix exists so that
+    interrupt_before=["solver"] fires and the graph pauses for HITL.
+    Resume pass: honor the approval decision set by the callback handler.
+    """
+    approval = state.get("approval_status")
+    if approval == "APPROVED":
         return "solver"
-    # REJECTED, EXPIRED, missing — terminate without mutation.
+    if approval in ("REJECTED", "EXPIRED"):
+        return END
+    # First pass — approval not yet set. Route to solver only when there is a
+    # proposed fix; interrupt_before will pause the graph before solver runs.
+    report = state.get("report")
+    if report and report.proposed_fix:
+        return "solver"
     return END
 
 
@@ -69,6 +81,7 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> Any:
     builder.add_node("network_expert", network_expert_node)
     builder.add_node("reporter", reporter_node)
     builder.add_node("solver", solver_node)
+    builder.add_node("reporter_followup", reporter_followup_node)
 
     # Linear entry
     builder.add_edge(START, "ingest")
@@ -99,7 +112,8 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> Any:
             END: END,
         },
     )
-    builder.add_edge("solver", END)
+    builder.add_edge("solver", "reporter_followup")
+    builder.add_edge("reporter_followup", END)
 
     compile_kwargs: dict[str, Any] = {"interrupt_before": ["solver"]}
     if checkpointer is not None:
