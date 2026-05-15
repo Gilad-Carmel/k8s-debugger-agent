@@ -30,7 +30,7 @@ An alerting system fires a webhook into the platform. Within a small number of s
 
 1. **Given** a webhook payload referencing a pod with a known application-error stack trace, **When** the workflow processes it, **Then** the report is routed to the Application expert and cites the relevant trace lines in the chat message.
 2. **Given** a webhook payload referencing a pod with DNS / connection failures, **When** the workflow processes it, **Then** the report is routed to the Network expert and cites the network-error log lines.
-3. **Given** a webhook payload referencing a pod whose logs show DB connection-pool exhaustion or query timeouts, **When** the workflow processes it, **Then** the report is routed to the Database expert and cites the DB-error log lines.
+3. **Given** a webhook payload referencing a pod whose logs show DB connection-pool exhaustion or query timeouts, **When** the workflow processes it, **Then** the Router classifies it as `Database` and the Reporter surfaces the DB-error log lines without a proposed remediation (no Database expert in MVP).
 4. **Given** a webhook payload whose logs do not yield enough signal to classify, **When** the workflow processes it, **Then** the report is sent with classification "unknown," no fix proposed, and the Approve button is absent or disabled.
 5. **Given** a webhook arrives for a pod the platform cannot read (auth/scope), **When** the workflow runs, **Then** the user sees a clear authorization error in chat and no LLM calls are made.
 

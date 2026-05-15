@@ -87,7 +87,7 @@ Evaluated against `.specify/memory/constitution.md` v1.1.0 (Principles I–IX).
 | IV | Evidence-Backed Triage (NON-NEGOTIABLE) | ✅ Compliant | Router cites (FR-007), Experts cite (FR-010), 100% of user-facing claims cited (SC-005). Hallucination tests run in CI. |
 | V | Observability & Reversibility | ✅ Compliant | Single `correlation_id` joins every stage (FR-028). Audit table records prompt, response, model, tokens, cost, redactions, pre/action/post-state, and the **Inverse Action** computed at Solver execution time (FR-022, FR-023). LangGraph checkpoints provide an additional crash-recovery audit surface. Append-only invariant enforced at application layer (`audit.py` sole writer; unit test asserts no UPDATE/DELETE SQL — DB-level role revocation is a Postgres feature not available in SQLite; application-layer enforcement is the MVP tradeoff). |
 | VI | Code Quality | ✅ Compliant | `ruff` + `black` + `mypy --strict` in CI. Cyclomatic complexity cap (15) enforced via `ruff` `C901`. Dependency vetting captured in `research.md` §R13. Two-reviewer rule applies to PRs touching MCP write tools, redaction, budget enforcement, authorization (`auth.py` + role-check), **model selection / provider dependencies (`llm.py`, `settings.py:LLM_*`)**, and this plan. Switch from `anthropic` → `langchain-openai` is a model-dependency change; this plan update counts as the first required review. |
-| VII | Testing Standards (NON-NEGOTIABLE) | ✅ Compliant | Coverage floors 85% / 95% enforced in CI per safety-critical module list (`redaction`, `budget`, `approval`, `auth`, `solver._guards`, MCP `tools/_guards`, MCP write tools). LLM eval suite for Router and per-Expert (all three: Application, Network, Database). Hallucination test on every Expert response. Refusal-path + Inverse-Action-recipe tests for every MCP write tool. |
+| VII | Testing Standards (NON-NEGOTIABLE) | ✅ Compliant | Coverage floors 85% / 95% enforced in CI per safety-critical module list (`redaction`, `budget`, `approval`, `auth`, `solver._guards`, MCP `tools/_guards`, MCP write tools). LLM eval suite for Router and per-Expert (Application, Network). Hallucination test on every Expert response. Refusal-path + Inverse-Action-recipe tests for every MCP write tool. |
 | VIII | User Experience Consistency | ✅ Compliant | One pydantic `Report` model produced by the Reporter node; rendered for Slack-mock today, web/CLI later. Shared label vocabulary (`Application` / `Network` / `Database` / `Unknown`). Single error-message template. Timestamps ISO-8601; bytes IEC. |
 | IX | Performance Requirements (DevOps SLOs) | ✅ Compliant | TTFT/p50/p95/cost SLOs declared above and CI-enforced on the benchmark. Bounded jittered retries on K8s + LLM calls. Hot paths (LangGraph node entry/exit, MCP tool calls) profiled via `opentelemetry`. Freshness SLO N/A (MVP refetches every incident). |
 
@@ -132,7 +132,6 @@ src/
 │   │       ├── experts/
 │   │       │   ├── application.py     # Node 3a
 │   │       │   ├── network.py         # Node 3b
-│   │       │   ├── database.py        # Node 3c
 │   │       │   └── _base.py           # shared expert protocol
 │   │       ├── reporter.py            # Node 4: assemble Report + send to slack-mock
 │   │       └── solver.py              # Node 5 (post-interrupt): NO LLM — deterministic execution of the frozen ProposedFix via MCP write tools; computes Inverse Action from captured pre-state
@@ -186,7 +185,6 @@ tests/
 │   ├── router_golden.jsonl            # labeled router classification fixtures
 │   ├── application_expert_golden.jsonl
 │   ├── network_expert_golden.jsonl
-│   ├── database_expert_golden.jsonl
 │   ├── solver_golden.jsonl            # labeled remediation scenarios for SC-008 benchmark
 │   ├── hallucination_suite.py         # every claim must cite an excerpt present in the input
 │   └── runner.py
@@ -217,7 +215,7 @@ docs/
 └── (created by /speckit-tasks polish phase if needed)
 ```
 
-**Structure Decision**: Python monorepo with two installable packages — `src/agent` (the FastAPI + LangGraph service) and `src/mcp_server` (the MCP tool server) — sharing `src/shared` for the cross-package contracts (Report schema, allowed-remediation catalog + Inverse Action mapping, domain/severity/outcome label vocabulary, user-facing error template). The MVP supports three domain Experts (Application, Network, Database) matching the spec's four-way taxonomy (the fourth, `Unknown`, short-circuits past the Experts). The Ingest node draws evidence from three MCP read tools (`search_pod_logs`, `get_pod_events`, `get_pod`) and emits a TTFT acknowledgement to chat before any LLM call. The mock-Slack receiver is a tiny FastAPI service under `deploy/slack_mock/` rather than its own installable package. Two packages instead of one keeps the write-tools (and their per-tool ServiceAccounts) physically separated from the agent process, which directly supports Principles I and V — the agent cannot mutate a cluster without going through the MCP boundary.
+**Structure Decision**: Python monorepo with two installable packages — `src/agent` (the FastAPI + LangGraph service) and `src/mcp_server` (the MCP tool server) — sharing `src/shared` for the cross-package contracts (Report schema, allowed-remediation catalog + Inverse Action mapping, domain/severity/outcome label vocabulary, user-facing error template). The MVP supports two domain Experts (Application, Network); `Database` and `Unknown` classifications short-circuit past the Experts directly to the Reporter. The Ingest node draws evidence from three MCP read tools (`search_pod_logs`, `get_pod_events`, `get_pod`) and emits a TTFT acknowledgement to chat before any LLM call. The mock-Slack receiver is a tiny FastAPI service under `deploy/slack_mock/` rather than its own installable package. Two packages instead of one keeps the write-tools (and their per-tool ServiceAccounts) physically separated from the agent process, which directly supports Principles I and V — the agent cannot mutate a cluster without going through the MCP boundary.
 
 ## Complexity Tracking
 

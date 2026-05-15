@@ -10,12 +10,12 @@ Corresponds to data-model.md §Common types and tasks.md T012.
 from typing import Literal
 
 # ---------------------------------------------------------------------------
-# Domain — four-way taxonomy for incident classification (spec FR-005/FR-008)
+# Domain — three-way taxonomy for incident classification (spec FR-005/FR-008)
 # ---------------------------------------------------------------------------
-Domain = Literal["Application", "Network", "Database", "Unknown"]
+Domain = Literal["Application", "Network", "Unknown"]
 
 # Domain values as a frozenset for runtime membership tests
-DOMAINS: frozenset[str] = frozenset({"Application", "Network", "Database", "Unknown"})
+DOMAINS: frozenset[str] = frozenset({"Application", "Network", "Unknown"})
 
 # ---------------------------------------------------------------------------
 # Confidence — how certain the Router / Expert is of its conclusion

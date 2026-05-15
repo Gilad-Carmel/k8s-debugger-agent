@@ -3,8 +3,8 @@ src/agent/graph/nodes/experts/_base.py
 
 Shared Expert protocol and prompt-builder — T047.
 
-Provides all domain-agnostic infrastructure used by the three Expert nodes
-(Application, Network, Database):
+Provides all domain-agnostic infrastructure used by the Expert nodes
+(Application, Network):
 
   - Module-level utilities: ``format_evidence``, ``format_router_context``,
     ``build_expert_llm``, ``validate_action``, ``resolve_target``.
@@ -228,23 +228,37 @@ def validate_action(
 
     if action == "rollback-deployment":
         rev = parameters.get("to_revision") if isinstance(parameters, dict) else None
+        dep = parameters.get("deployment") if isinstance(parameters, dict) else None
         if not isinstance(rev, int) or rev < 0:
             logger.warning(
                 "rollback-deployment missing/invalid to_revision %r; dropping fix",
                 rev,
             )
             return None, {}
-        return "rollback-deployment", {"to_revision": rev}
+        if not isinstance(dep, str) or not dep:
+            logger.warning(
+                "rollback-deployment missing/invalid deployment %r; dropping fix",
+                dep,
+            )
+            return None, {}
+        return "rollback-deployment", {"to_revision": rev, "deployment": dep}
 
     if action == "scale-deployment":
         rep = parameters.get("to_replicas") if isinstance(parameters, dict) else None
+        dep = parameters.get("deployment") if isinstance(parameters, dict) else None
         if not isinstance(rep, int) or rep < 0:
             logger.warning(
                 "scale-deployment missing/invalid to_replicas %r; dropping fix",
                 rep,
             )
             return None, {}
-        return "scale-deployment", {"to_replicas": rep}
+        if not isinstance(dep, str) or not dep:
+            logger.warning(
+                "scale-deployment missing/invalid deployment %r; dropping fix",
+                dep,
+            )
+            return None, {}
+        return "scale-deployment", {"to_replicas": rep, "deployment": dep}
 
     # Defensive: new ActionType entry added without updating this validator.
     logger.error("unhandled action_type %r — update validate_action in _base.py", action)
@@ -252,15 +266,22 @@ def validate_action(
 
 
 def resolve_target(state: WorkflowState) -> Target:
-    """Return the Target from state.incident, or a safe placeholder.
+    """Return the Target from state.incident, alert_payload, or a safe placeholder.
 
-    Missing incident is anomalous but we degrade gracefully rather than
-    raising — the on-call still gets a diagnosis, just with a placeholder
-    target they can validate.
+    Webhook-triggered runs set alert_payload but not incident; listener-triggered
+    runs set incident directly.  Both paths are checked before falling back to
+    the placeholder so the Expert always proposes the correct target.
     """
     incident = state.get("incident")
     if incident is not None:
         return incident.target
+    alert_payload = state.get("alert_payload")
+    if alert_payload is not None:
+        labels = alert_payload.get("groupLabels", {})
+        namespace = labels.get("namespace", "default")
+        pod = labels.get("pod", "unknown-pod")
+        if namespace and pod and pod != "unknown-pod":
+            return Target(namespace=namespace, pod=pod)
     return Target(namespace="default", pod="unknown-pod")
 
 
@@ -269,7 +290,7 @@ def resolve_target(state: WorkflowState) -> Target:
 # ---------------------------------------------------------------------------
 
 class BaseExpert(ABC):
-    """Abstract base for Application / Network / Database Expert nodes.
+    """Abstract base for Application / Network Expert nodes.
 
     Subclass contract:
       - Set ``domain`` (class variable) to one of the ``Domain`` literals.
