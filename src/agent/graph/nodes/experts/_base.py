@@ -228,23 +228,37 @@ def validate_action(
 
     if action == "rollback-deployment":
         rev = parameters.get("to_revision") if isinstance(parameters, dict) else None
+        dep = parameters.get("deployment") if isinstance(parameters, dict) else None
         if not isinstance(rev, int) or rev < 0:
             logger.warning(
                 "rollback-deployment missing/invalid to_revision %r; dropping fix",
                 rev,
             )
             return None, {}
-        return "rollback-deployment", {"to_revision": rev}
+        if not isinstance(dep, str) or not dep:
+            logger.warning(
+                "rollback-deployment missing/invalid deployment %r; dropping fix",
+                dep,
+            )
+            return None, {}
+        return "rollback-deployment", {"to_revision": rev, "deployment": dep}
 
     if action == "scale-deployment":
         rep = parameters.get("to_replicas") if isinstance(parameters, dict) else None
+        dep = parameters.get("deployment") if isinstance(parameters, dict) else None
         if not isinstance(rep, int) or rep < 0:
             logger.warning(
                 "scale-deployment missing/invalid to_replicas %r; dropping fix",
                 rep,
             )
             return None, {}
-        return "scale-deployment", {"to_replicas": rep}
+        if not isinstance(dep, str) or not dep:
+            logger.warning(
+                "scale-deployment missing/invalid deployment %r; dropping fix",
+                dep,
+            )
+            return None, {}
+        return "scale-deployment", {"to_replicas": rep, "deployment": dep}
 
     # Defensive: new ActionType entry added without updating this validator.
     logger.error("unhandled action_type %r — update validate_action in _base.py", action)
