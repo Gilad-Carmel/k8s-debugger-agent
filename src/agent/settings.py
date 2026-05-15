@@ -153,7 +153,7 @@ class AgentSettings(BaseSettings):
         ),
     )
     poll_interval_seconds: int = Field(
-        default=30,
+        default=3,
         description="Seconds between listener poll cycles.",
     )
     listener_lookback_minutes: int = Field(

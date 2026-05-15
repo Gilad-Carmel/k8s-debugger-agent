@@ -151,7 +151,7 @@ export function WorkflowDiagram({ events, awaitingApproval }: WorkflowDiagramPro
   return (
     <section className="panel panel--diagram">
       <h2 className="panel__title">Workflow Visualizer</h2>
-      <div style={{ height: 620 }}>
+      <div style={{ flex: 1, minHeight: 0 }}>
         <ReactFlow
           nodes={nodes}
           edges={edges}

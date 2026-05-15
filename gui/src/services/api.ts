@@ -26,6 +26,11 @@ export async function injectScenario(scenario: InjectScenario): Promise<Scenario
   return data
 }
 
+export async function fetchPodLogs(namespace: string, name: string, tail = 100): Promise<{ logs: string; warning: string | null }> {
+  const { data } = await http.get(`/pods/${namespace}/${name}/logs`, { params: { tail } })
+  return data
+}
+
 export async function approveIncident(
   correlationId: string,
   body: GuiApprovalRequest = {},

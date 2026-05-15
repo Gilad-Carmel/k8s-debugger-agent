@@ -107,6 +107,19 @@ async def _run_graph_streaming(graph: Any, correlation_id: str, alert_payload: d
         "reporter", "solver",
     }
 
+    def _excerpts_to_list(excerpts: list, cap: int = 50) -> list[dict[str, Any]]:
+        result = []
+        for e in excerpts[:cap]:
+            try:
+                result.append({
+                    "ts": e.timestamp.isoformat() if hasattr(e.timestamp, "isoformat") else str(e.timestamp),
+                    "container": e.container,
+                    "text": e.text,
+                })
+            except Exception:  # noqa: BLE001
+                pass
+        return result
+
     try:
         async for event in graph.astream_events(initial_state, config=config, version="v2"):
             kind = event.get("event", "")
@@ -122,48 +135,87 @@ async def _run_graph_streaming(graph: Any, correlation_id: str, alert_payload: d
                 output = event.get("data", {}).get("output") or {}
                 node_data: dict[str, Any] = {}
 
-                if name == "router" and isinstance(output, dict):
-                    routing = output.get("routing") or {}
-                    node_data = {
-                        "domain": getattr(routing, "domain", routing.get("domain", "")),
-                        "confidence": getattr(routing, "confidence", routing.get("confidence", 0)),
-                    }
+                if name == "ingest" and isinstance(output, dict):
+                    evidence = output.get("filtered_evidence")
+                    if evidence is not None:
+                        hit_lines = getattr(evidence, "hit_lines", []) or []
+                        node_data = {
+                            "hit_count": len(hit_lines),
+                            "total_lines": getattr(evidence, "total_lines", 0),
+                            "log_lines": _excerpts_to_list(hit_lines),
+                        }
+
+                elif name == "router" and isinstance(output, dict):
+                    routing = output.get("routing")
+                    if routing is not None:
+                        cited = getattr(routing, "cited_evidence", []) or []
+                        node_data = {
+                            "domain": str(getattr(routing, "domain", "")),
+                            "confidence": str(getattr(routing, "confidence", "")),
+                            "cited_lines": _excerpts_to_list(cited, cap=3),
+                        }
+
                 elif name in {"application_expert", "network_expert", "database_expert"} and isinstance(output, dict):
-                    diag = output.get("diagnosis") or {}
-                    node_data = {
-                        "root_cause_label": getattr(diag, "root_cause_label", diag.get("root_cause_label", "")),
-                        "severity": getattr(diag, "severity", diag.get("severity", "")),
-                    }
+                    diag = output.get("diagnosis")
+                    if diag is not None:
+                        cited = getattr(diag, "cited_evidence", []) or []
+                        fix = getattr(diag, "proposed_fix", None)
+                        fix_target = getattr(fix, "target", None) if fix else None
+                        node_data = {
+                            "domain": str(getattr(diag, "domain", "")),
+                            "root_cause": str(getattr(diag, "root_cause_hypothesis", "")),
+                            "confidence": str(getattr(diag, "confidence", "")),
+                            "cited_lines": _excerpts_to_list(cited, cap=3),
+                            "proposed_fix": {
+                                "action_type": str(getattr(fix, "action_type", "")),
+                                "namespace": str(getattr(fix_target, "namespace", "")),
+                                "pod": str(getattr(fix_target, "pod", "")),
+                                "parameters": getattr(fix, "parameters", {}),
+                            } if fix else None,
+                        }
+
                 elif name == "reporter" and isinstance(output, dict):
-                    report = output.get("report") or {}
-                    pf = getattr(report, "proposed_fix", None) or report.get("proposed_fix") or {}
-                    node_data = {
-                        "summary": getattr(report, "summary", report.get("summary", "")),
-                        "proposed_fix_title": getattr(pf, "title", pf.get("title", "") if isinstance(pf, dict) else ""),
-                    }
-                    # After reporter completes the graph hits the HITL gate
+                    report = output.get("report")
+                    if report is not None:
+                        routing = getattr(report, "routing", None)
+                        diag = getattr(report, "diagnosis", None)
+                        fix = getattr(report, "proposed_fix", None)
+                        fix_target = getattr(fix, "target", None) if fix else None
+                        node_data = {
+                            "domain": str(getattr(routing, "domain", "")) if routing else "",
+                            "confidence": str(getattr(routing, "confidence", "")) if routing else "",
+                            "root_cause": str(getattr(diag, "root_cause_hypothesis", "")) if diag else "",
+                            "proposed_fix_action": str(getattr(fix, "action_type", "")) if fix else "",
+                            "proposed_fix_namespace": str(getattr(fix_target, "namespace", "")) if fix_target else "",
+                            "proposed_fix_pod": str(getattr(fix_target, "pod", "")) if fix_target else "",
+                        }
                     await publish(
                         correlation_id,
                         WorkflowEventType.NODE_COMPLETED,
                         node=name,
                         data=node_data,
                     )
+                    fix_title = node_data.get("proposed_fix_action", "")
+                    if node_data.get("proposed_fix_pod"):
+                        fix_title += f" on {node_data['proposed_fix_namespace']}/{node_data['proposed_fix_pod']}"
                     await publish(
                         correlation_id,
                         WorkflowEventType.AWAITING_APPROVAL,
-                        data={
-                            "proposed_fix_title": node_data.get("proposed_fix_title", ""),
-                            "proposed_fix_description": "",
-                        },
+                        data={"proposed_fix_title": fix_title},
                     )
                     continue
 
                 elif name == "solver" and isinstance(output, dict):
-                    solver_run = output.get("solver_run") or {}
-                    node_data = {
-                        "tool_called": getattr(solver_run, "tool_called", solver_run.get("tool_called", "")),
-                        "outcome": getattr(solver_run, "outcome", solver_run.get("outcome", "")),
-                    }
+                    solver_run = output.get("solver_run")
+                    if solver_run is not None:
+                        action = getattr(solver_run, "action_issued", {}) or {}
+                        reversal = getattr(solver_run, "reversal_recipe", None)
+                        node_data = {
+                            "action_type": str(action.get("action_type", "")),
+                            "outcome": str(getattr(solver_run, "outcome", "")),
+                            "reversal": str(getattr(reversal, "description", "")) if reversal else "",
+                            "error": getattr(solver_run, "error", None),
+                        }
                     await publish(
                         correlation_id,
                         WorkflowEventType.NODE_COMPLETED,

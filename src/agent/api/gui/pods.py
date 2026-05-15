@@ -120,3 +120,26 @@ async def list_pods(namespace: str = "demo") -> JSONResponse:
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
     )
+
+
+@router.get("/api/pods/{namespace}/{name}/logs")
+async def get_pod_logs(namespace: str, name: str, tail: int = 100) -> JSONResponse:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "kubectl", "logs", name, "-n", namespace, f"--tail={tail}", "--timestamps",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=KUBECTL_TIMEOUT)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return JSONResponse(content={"logs": "", "warning": "kubectl logs timed out"})
+    except FileNotFoundError:
+        return JSONResponse(content={"logs": "", "warning": "kubectl not found"})
+
+    if proc.returncode != 0:
+        err = stderr.decode(errors="replace").strip()
+        return JSONResponse(content={"logs": "", "warning": err or "kubectl logs failed"})
+
+    return JSONResponse(content={"logs": stdout.decode(errors="replace"), "warning": None})

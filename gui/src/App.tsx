@@ -1,9 +1,8 @@
 import { useMemo, useState } from 'react'
 import { ApprovalPanel } from './components/ApprovalPanel'
-import { EventLog } from './components/EventLog'
+import { PipelineLog } from './components/PipelineLog'
 import { PodGrid } from './components/PodGrid'
 import { ScenarioButtons } from './components/ScenarioButtons'
-import { WorkflowDiagram } from './components/WorkflowDiagram'
 import { useEventStream } from './hooks/useEventStream'
 import { usePods } from './hooks/usePods'
 import type { WorkflowEvent } from './types/events'
@@ -50,16 +49,15 @@ export function App() {
       </header>
 
       <div className="app-layout">
-        {/* Left column: diagram + pod status */}
+        {/* Left column: pipeline log + pod status */}
         <div className="app-left">
-          <WorkflowDiagram events={events} awaitingApproval={awaitingApproval} />
+          <PipelineLog events={events} correlationId={correlationId} connected={connected} />
           <PodGrid pods={pods} loading={podsLoading} error={podError} warning={podWarning} />
         </div>
 
-        {/* Right column: triggers + event log */}
+        {/* Right column: triggers */}
         <div className="app-right">
           <ScenarioButtons onTriggered={handleScenarioTriggered} />
-          <EventLog events={events} connected={connected} correlationId={correlationId} />
         </div>
       </div>
 
