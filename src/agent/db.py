@@ -63,6 +63,38 @@ async def get_conn() -> AsyncIterator[aiosqlite.Connection]:
         await conn.close()
 
 
+async def save_incident(
+    correlation_id: str,
+    dedup_fingerprint: str,
+    source_alert_id: str,
+    namespace: str,
+    pod: str,
+    received_at: str,
+    approval_deadline: str | None = None,
+) -> None:
+    """Insert a new incident row (status=pending). Ignores conflicts (idempotent)."""
+    async with get_conn() as conn:
+        await conn.execute(
+            """
+            INSERT OR IGNORE INTO incidents (
+                correlation_id, dedup_fingerprint, source_alert_id,
+                namespace, pod, status, received_at, last_seen_at, approval_deadline
+            ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+            """,
+            (
+                correlation_id,
+                dedup_fingerprint,
+                source_alert_id,
+                namespace,
+                pod,
+                received_at,
+                received_at,
+                approval_deadline,
+            ),
+        )
+        await conn.commit()
+
+
 async def set_proposed_fix_fingerprint(correlation_id: str, fingerprint: str) -> None:
     async with get_conn() as conn:
         await conn.execute(
