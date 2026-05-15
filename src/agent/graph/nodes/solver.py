@@ -192,9 +192,26 @@ def solver_node(state: WorkflowState) -> WorkflowState:
             )
         except Exception as exc:
             logger.exception("solver execution error corr=%s", correlation_id)
-            return _build_failure(
+            failure_result = _build_failure(
                 correlation_id, fingerprint, {}, str(exc), started_at
             )
+            updated_report = report.model_copy(update={"status": "failed"})
+            try:
+                from src.agent.graph.nodes.reporter import deliver  # noqa: PLC0415
+                _run_async(
+                    deliver(
+                        report=updated_report,
+                        solver_run=failure_result["solver_run"],
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "solver follow-up delivery failed corr=%s", correlation_id
+                )
+            return {  # type: ignore[return-value]
+                "solver_run": failure_result["solver_run"],
+                "report": updated_report,
+            }
 
     # ---- Map WriteToolOutput.outcome → SolverOutcome ------------------------
     if result.outcome == "applied":
