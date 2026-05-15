@@ -3,8 +3,8 @@ src/agent/graph/nodes/experts/_base.py
 
 Shared Expert protocol and prompt-builder — T047.
 
-Provides all domain-agnostic infrastructure used by the three Expert nodes
-(Application, Network, Database):
+Provides all domain-agnostic infrastructure used by the Expert nodes
+(Application, Network):
 
   - Module-level utilities: ``format_evidence``, ``format_router_context``,
     ``build_expert_llm``, ``validate_action``, ``resolve_target``.
@@ -283,7 +283,7 @@ def resolve_target(state: WorkflowState) -> Target:
 # ---------------------------------------------------------------------------
 
 class BaseExpert(ABC):
-    """Abstract base for Application / Network / Database Expert nodes.
+    """Abstract base for Application / Network Expert nodes.
 
     Subclass contract:
       - Set ``domain`` (class variable) to one of the ``Domain`` literals.
