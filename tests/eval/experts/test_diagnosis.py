@@ -349,6 +349,59 @@ APP_CASES: List[_Case] = [
         ],
         expected_actions=("restart-pod", None),
     ),
+    # -------------------------------------------------------------------
+    # STRICT non-restart-pod, non-None cases.
+    #
+    # The previous fixture set's `expected_actions` always included
+    # restart-pod and/or None as escape hatches.  These four cases narrow
+    # the accepted set to a single non-restart-pod, non-None catalog action
+    # — so the test passes ONLY if the expert exercises the rest of the
+    # catalog appropriately.  They are deliberately maximalist: explicit
+    # revision numbers, explicit replica counts, explicit phrases that the
+    # prompt-bound catalog can match.
+    # -------------------------------------------------------------------
+    # Strict-rollback (Application): unambiguous deploy-linked regression
+    # with the prior revision named in the evidence.
+    _Case(
+        note="app-strict-rollback-deploy-regression",
+        domain="Application",
+        log_text=[
+            "Deployment payments-api rolled out to revision 7 at 10:00:00Z",
+            "Image changed: payments:v3.1.0 -> payments:v3.2.0",
+            "100% of pods crash on startup post-rollout: panic: nil pointer in NewClient",
+            "Last stable revision: 6 (image payments:v3.1.0)",
+            "Recommended action: rollback deployment payments-api to revision 6",
+        ],
+        expected_actions=("rollback-deployment",),
+    ),
+    # Strict-scale (Application): saturation pattern with explicit replica
+    # numbers; HPA cannot help because maxReplicas is the bottleneck.
+    _Case(
+        note="app-strict-scale-saturated-queue",
+        domain="Application",
+        log_text=[
+            "Service api-gateway: queue depth 50000, p99 latency 8s, dropping requests",
+            "ALL 3 replicas reporting CPU=98% sustained for 15 minutes",
+            "HPA suppressed: replicas at maxReplicas=3; manual scale required to 12 replicas",
+            "Sustained load: 12k req/s; baseline capacity: 4k req/s per replica",
+            "Recommended action: scale deployment api-gateway to 12 replicas",
+        ],
+        expected_actions=("scale-deployment",),
+    ),
+    # Strict-delete-pod (Application): stuck init container — restart-pod
+    # is explicitly called out as insufficient in the evidence.
+    _Case(
+        note="app-strict-delete-stuck-init",
+        domain="Application",
+        log_text=[
+            "Pod api-7b9d-xyz: Init container 'wait-for-db' stuck in CrashLoopBackOff",
+            "Init container has been in non-running state for 42 minutes",
+            "Restarting the pod will NOT recover (kubelet re-pulls stale init image cached on node)",
+            "Pod must be deleted so the controller can reschedule it on a fresh node",
+            "Recommended action: delete pod api-7b9d-xyz to force reschedule",
+        ],
+        expected_actions=("delete-pod-to-reschedule",),
+    ),
 ]
 
 
@@ -512,6 +565,25 @@ NET_CASES: List[_Case] = [
             "Failed to connect to payments-svc.prod.svc.cluster.local:443",
         ],
         expected_actions=("restart-pod", "rollback-deployment", None),
+    ),
+    # -------------------------------------------------------------------
+    # STRICT non-restart-pod, non-None Network case.  Network MVP catalog
+    # is restricted to {restart-pod, rollback-deployment}; this is the
+    # only non-restart-pod, non-None action available to the Network
+    # expert.  Unambiguous deploy-linked regression with prior revision
+    # named in evidence.
+    # -------------------------------------------------------------------
+    _Case(
+        note="net-strict-rollback-deploy-linked",
+        domain="Network",
+        log_text=[
+            "Deployment ingress-controller updated to revision 5 at 09:58:00Z",
+            "Image: nginx:1.25.1 -> nginx:1.25.2-buggy",
+            "100% of upstream connections refused post-rollout: dial tcp: connection refused",
+            "Previous stable revision: 4 (nginx:1.25.1)",
+            "Recommended action: rollback deployment ingress-controller to revision 4",
+        ],
+        expected_actions=("rollback-deployment",),
     ),
 ]
 

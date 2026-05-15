@@ -86,15 +86,25 @@ one of those lines. Specifically:
                                   startup probe flake). No parameters.
   - "rollback-deployment"       — a recent release introduced the bug;
                                   rolling back to the prior revision
-                                  should restore service. REQUIRES
-                                  `proposed_parameters.to_revision`
-                                  (integer) — use only when the evidence
-                                  cites a specific prior revision number;
-                                  otherwise return null.
+                                  should restore service. REQUIRES BOTH
+                                  `proposed_parameters.deployment`
+                                  (string — the Deployment name, drawn
+                                  verbatim from the evidence; do NOT
+                                  guess) AND `proposed_parameters
+                                  .to_revision` (integer — the prior
+                                  stable revision number, also drawn
+                                  verbatim from the evidence). If
+                                  EITHER value is not cited in the
+                                  evidence, return null instead.
   - "scale-deployment"          — load exceeded capacity and the pod was
                                   crash-killed under pressure. REQUIRES
+                                  BOTH `proposed_parameters.deployment`
+                                  (string — the Deployment name, drawn
+                                  verbatim from the evidence) AND
                                   `proposed_parameters.to_replicas`
-                                  (integer).
+                                  (integer — the new replica count). If
+                                  EITHER value cannot be grounded in
+                                  the evidence, return null instead.
   - "delete-pod-to-reschedule"  — the pod is stuck (wedged init
                                   container) and a controller-managed
                                   recreate will resolve it. No
@@ -116,9 +126,10 @@ The object MUST contain exactly these six keys:
   "runner_up_causes"      : list of short alternative-hypothesis strings
                             (may be []).
   "proposed_action"       : one of the four catalog strings, or null.
-  "proposed_parameters"   : action-specific params (e.g. {"to_revision":
-                            7}). Use {} when the action needs no params
-                            or proposed_action is null.
+  "proposed_parameters"   : action-specific params (e.g. {"deployment":
+                            "payments-api", "to_revision": 7}). Use {}
+                            when the action needs no params or
+                            proposed_action is null.
 
 Example of a valid response:
 {"root_cause_hypothesis":"The api-server container is in a Go panic crash-loop after dereferencing a nil pointer in main.processRequest.","cited_indices":[0,2,3],"confidence":"high","runner_up_causes":["OOMKilled","misconfigured liveness probe"],"proposed_action":"restart-pod","proposed_parameters":{}}

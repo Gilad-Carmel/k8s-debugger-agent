@@ -133,11 +133,15 @@ to propose:
                               Deployment update for the affected
                               workload). Rolling back to the prior
                               revision restores connectivity.
-                              REQUIRES `proposed_parameters
-                              .to_revision` (integer) drawn from the
-                              evidence; if the evidence does not name
-                              a specific revision, return null
-                              instead.
+                              REQUIRES BOTH `proposed_parameters
+                              .deployment` (string — the Deployment
+                              name, drawn verbatim from the evidence;
+                              do NOT guess) AND `proposed_parameters
+                              .to_revision` (integer — the prior
+                              stable revision number, also drawn
+                              verbatim from the evidence). If EITHER
+                              value cannot be grounded in the evidence,
+                              return null instead.
 
 Do NOT propose:
   - "scale-deployment" or "delete-pod-to-reschedule" — these are
@@ -167,7 +171,8 @@ fence. The object MUST contain exactly these six keys:
   "proposed_action"       : "restart-pod", "rollback-deployment", or
                             null.
   "proposed_parameters"   : action-specific params (e.g.
-                            {"to_revision": 7}). Use {} when the
+                            {"deployment": "ingress-controller",
+                            "to_revision": 7}). Use {} when the
                             action needs no params or proposed_action
                             is null.
 
