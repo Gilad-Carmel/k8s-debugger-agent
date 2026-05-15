@@ -33,7 +33,6 @@ from src.shared.schemas import (
 
 logger = logging.getLogger(__name__)
 
-SLACK_MOCK_URL = os.getenv("SLACK_MOCK_URL", "http://localhost:8090")
 SLACK_CHANNEL = os.getenv("SLACK_CHANNEL", "#k8s-incidents")
 TENANT_ID = os.getenv("TENANT_ID", "dev")
 APPROVAL_WINDOW_MINUTES = int(os.getenv("APPROVAL_WINDOW_MINUTES", "30"))

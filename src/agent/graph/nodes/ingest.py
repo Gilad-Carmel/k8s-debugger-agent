@@ -150,7 +150,7 @@ async def _fetch_evidence(
             except Exception:  # noqa: BLE001
                 pass
 
-    # --- pod snapshot — log for context; not stored in WorkflowState yet ---
+    # --- pod snapshot — inject synthetic excerpt if pod is not ready ---
     if isinstance(pod_result, BaseException):
         log.warning("get_pod failed: %s", pod_result, extra={"correlation_id": correlation_id})
     else:
@@ -159,6 +159,15 @@ async def _fetch_evidence(
             pod_result.phase, pod_result.ready,
             extra={"correlation_id": correlation_id},
         )
+        if not pod_result.ready:
+            event_excerpts.append(
+                LogExcerpt(
+                    timestamp=datetime.now(tz=timezone.utc),
+                    container="k8s-probe",
+                    text="ERROR: pod readiness probe failing — pod is not ready",
+                    byte_offset=0,
+                )
+            )
 
     # --- merge ---
     merged_hits = list(log_evidence.hit_lines) + event_excerpts
@@ -322,6 +331,17 @@ async def _poll_pod(
         received_at=now,
         last_seen_at=now,
         status="pending",
+    )
+
+    # Persist incident to DB so the callback handler can look it up on approve/reject.
+    from src.agent.db import save_incident  # local import avoids circular
+    await save_incident(
+        correlation_id=correlation_id,
+        dedup_fingerprint=key,
+        source_alert_id=f"listener:{namespace}/{pod}",
+        namespace=namespace,
+        pod=pod,
+        received_at=now.isoformat(),
     )
 
     initial_state: dict[str, Any] = {

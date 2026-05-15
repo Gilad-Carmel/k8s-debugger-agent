@@ -104,7 +104,7 @@ class AgentSettings(BaseSettings):
         description="HMAC secret used to sign /callbacks/slack payloads. Must match SLACK_MOCK_SECRET in the Discord bot.",
     )
     slack_mock_url: str = Field(
-        default="http://localhost:9000",
+        default="http://localhost:8090",
         description="URL of the mock-Slack receiver service.",
     )
     discord_bot_url: str = Field(

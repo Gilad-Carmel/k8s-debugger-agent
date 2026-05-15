@@ -266,15 +266,22 @@ def validate_action(
 
 
 def resolve_target(state: WorkflowState) -> Target:
-    """Return the Target from state.incident, or a safe placeholder.
+    """Return the Target from state.incident, alert_payload, or a safe placeholder.
 
-    Missing incident is anomalous but we degrade gracefully rather than
-    raising — the on-call still gets a diagnosis, just with a placeholder
-    target they can validate.
+    Webhook-triggered runs set alert_payload but not incident; listener-triggered
+    runs set incident directly.  Both paths are checked before falling back to
+    the placeholder so the Expert always proposes the correct target.
     """
     incident = state.get("incident")
     if incident is not None:
         return incident.target
+    alert_payload = state.get("alert_payload")
+    if alert_payload is not None:
+        labels = alert_payload.get("groupLabels", {})
+        namespace = labels.get("namespace", "default")
+        pod = labels.get("pod", "unknown-pod")
+        if namespace and pod and pod != "unknown-pod":
+            return Target(namespace=namespace, pod=pod)
     return Target(namespace="default", pod="unknown-pod")
 
 
