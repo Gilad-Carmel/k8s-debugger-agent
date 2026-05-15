@@ -213,6 +213,7 @@ def create_app() -> FastAPI:
     # GUI routers
     from src.agent.api.gui import (
         approval_router,
+        inject_router,
         pods_router,
         scenarios_router,
         stream_router,
@@ -223,6 +224,7 @@ def create_app() -> FastAPI:
     app.include_router(callbacks_router)
     app.include_router(pods_router)
     app.include_router(scenarios_router)
+    app.include_router(inject_router)
     app.include_router(stream_router)
     app.include_router(approval_router)
 

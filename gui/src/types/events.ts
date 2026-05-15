@@ -34,6 +34,7 @@ export interface PodStatus {
 export interface PodsResponse {
   pods: PodStatus[]
   fetched_at: string
+  warning?: string
 }
 
 export type DemoScenario = 'crash' | 'bad-deploy' | 'oom' | 'scale'

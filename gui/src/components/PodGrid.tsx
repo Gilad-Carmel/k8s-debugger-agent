@@ -4,6 +4,7 @@ interface PodGridProps {
   pods: PodStatus[]
   loading: boolean
   error: string | null
+  warning?: string | null
 }
 
 function PodCard({ pod }: { pod: PodStatus }) {
@@ -43,7 +44,7 @@ function PodCard({ pod }: { pod: PodStatus }) {
   )
 }
 
-export function PodGrid({ pods, loading, error }: PodGridProps) {
+export function PodGrid({ pods, loading, error, warning }: PodGridProps) {
   return (
     <section className="panel">
       <h2 className="panel__title">
@@ -52,8 +53,9 @@ export function PodGrid({ pods, loading, error }: PodGridProps) {
       </h2>
 
       {error && <p className="error-msg">{error}</p>}
+      {!error && warning && <p className="muted">{warning}</p>}
 
-      {pods.length === 0 && !loading && !error && (
+      {pods.length === 0 && !loading && !error && !warning && (
         <p className="muted">No pods found in the demo namespace. Run <code>make demo-deploy</code>.</p>
       )}
 

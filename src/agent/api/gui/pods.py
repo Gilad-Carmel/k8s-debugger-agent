@@ -4,7 +4,8 @@ src/agent/api/gui/pods.py
 GET /api/pods — List Kubernetes pod statuses for the demo namespace.
 
 Uses `kubectl get pods -n <namespace> -o json` via asyncio subprocess.
-Hard timeout of 5s; returns 503 if kubectl is unavailable or times out.
+Always returns HTTP 200. When kubectl is unavailable or fails, returns
+{"pods": [], "warning": "<reason>"} so the GUI can degrade gracefully.
 """
 
 from __future__ import annotations
@@ -97,30 +98,20 @@ async def list_pods(namespace: str = "demo") -> JSONResponse:
             )
         except asyncio.TimeoutError:
             proc.kill()
-            return JSONResponse(
-                status_code=503,
-                content={"error": "kubectl_timeout", "message": f"kubectl did not respond within {KUBECTL_TIMEOUT}s"},
-            )
+            return JSONResponse(content={"pods": [], "warning": f"kubectl timed out after {KUBECTL_TIMEOUT}s — no cluster connected", "fetched_at": datetime.now(timezone.utc).isoformat()})
     except FileNotFoundError:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "kubectl_not_found", "message": "kubectl binary not found in PATH"},
-        )
+        return JSONResponse(content={"pods": [], "warning": "kubectl not found — no cluster connected", "fetched_at": datetime.now(timezone.utc).isoformat()})
 
     if proc.returncode != 0:
-        err_msg = stderr.decode(errors="replace").strip()
-        return JSONResponse(
-            status_code=503,
-            content={"error": "kubectl_error", "message": err_msg or "kubectl returned non-zero exit code"},
-        )
+        raw = stderr.decode(errors="replace").strip()
+        # kubectl spams memcache warnings before the real error — take the last non-empty line
+        last_line = next((l for l in reversed(raw.splitlines()) if l.strip()), raw)
+        return JSONResponse(content={"pods": [], "warning": last_line or "kubectl error — no cluster connected", "fetched_at": datetime.now(timezone.utc).isoformat()})
 
     try:
         pod_list = json.loads(stdout)
     except json.JSONDecodeError:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "kubectl_parse_error", "message": "kubectl output was not valid JSON"},
-        )
+        return JSONResponse(content={"pods": [], "warning": "kubectl output was not valid JSON", "fetched_at": datetime.now(timezone.utc).isoformat()})
 
     pods = _parse_pods(pod_list, namespace)
     return JSONResponse(

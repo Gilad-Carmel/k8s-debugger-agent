@@ -19,6 +19,13 @@ export async function triggerScenario(scenario: DemoScenario): Promise<ScenarioT
   return data
 }
 
+export type InjectScenario = 'application' | 'network' | 'database' | 'unknown'
+
+export async function injectScenario(scenario: InjectScenario): Promise<ScenarioTriggerResponse> {
+  const { data } = await http.post<ScenarioTriggerResponse>(`/demo/inject/${scenario}`)
+  return data
+}
+
 export async function approveIncident(
   correlationId: string,
   body: GuiApprovalRequest = {},

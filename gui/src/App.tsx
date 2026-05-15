@@ -38,6 +38,7 @@ export function App() {
   }
 
   const pods = podsData?.pods ?? []
+  const podWarning = podsData?.warning ?? null
   const podError = podsError instanceof Error ? podsError.message : podsError ? String(podsError) : null
 
   return (
@@ -52,7 +53,7 @@ export function App() {
         {/* Left column: diagram + pod status */}
         <div className="app-left">
           <WorkflowDiagram events={events} awaitingApproval={awaitingApproval} />
-          <PodGrid pods={pods} loading={podsLoading} error={podError} />
+          <PodGrid pods={pods} loading={podsLoading} error={podError} warning={podWarning} />
         </div>
 
         {/* Right column: triggers + event log */}

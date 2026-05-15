@@ -9,8 +9,9 @@ GUI API package — exposes four FastAPI routers:
 """
 
 from src.agent.api.gui.approval import router as approval_router
+from src.agent.api.gui.inject import router as inject_router
 from src.agent.api.gui.pods import router as pods_router
 from src.agent.api.gui.scenarios import router as scenarios_router
 from src.agent.api.gui.stream import router as stream_router
 
-__all__ = ["pods_router", "scenarios_router", "stream_router", "approval_router"]
+__all__ = ["pods_router", "scenarios_router", "inject_router", "stream_router", "approval_router"]
