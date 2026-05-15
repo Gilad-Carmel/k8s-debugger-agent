@@ -15,10 +15,6 @@ T093 — Fingerprint mismatch: report fingerprint differs from state → failure
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import os
-import time
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, patch
