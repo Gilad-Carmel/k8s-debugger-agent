@@ -3,7 +3,7 @@ src/agent/graph/nodes/router.py
 
 Router node — T046.
 
-Classifies the incident domain (Application / Network / Database / Unknown)
+Classifies the incident domain (Application / Network / Unknown)
 using a small/fast LLM with ``langchain-openai``'s ``with_structured_output``
 binding.
 
@@ -56,21 +56,19 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _SYSTEM_PROMPT = """\
 You are a Kubernetes incident triage router.  Your sole job is to classify an
-incident into exactly one of these four domains based on the log evidence:
+incident into exactly one of these three domains based on the log evidence:
 
 • Application — code bugs, process crashes, unhandled exceptions (Go panics,
   Java stack traces, Python tracebacks), OOM kills, container restart-loops,
   application-level runtime errors.
 • Network — connection refused/timeout to internal or external services, DNS
   resolution failures, TLS/certificate errors, network policy blocks.
-• Database — connection pool exhaustion, query timeouts, replication lag,
-  storage disk-full, I/O errors from a database or persistence layer.
 • Unknown — insufficient evidence to classify with confidence.
 
 Respond ONLY with a JSON object — no prose, no markdown, no code fence.
 The object MUST contain exactly these four keys:
 
-  "domain"        : one of "Application", "Network", "Database", "Unknown"
+  "domain"        : one of "Application", "Network", "Unknown"
   "confidence"    : one of "low", "medium", "high"
   "cited_indices" : list of 0-based integers from the numbered evidence list
                     that directly support the classification.  Required
@@ -318,7 +316,6 @@ def route_after_router(state: WorkflowState) -> str:
     domain_to_node: dict[str, str] = {
         "Application": "application_expert",
         "Network": "network_expert",
-        "Database": "database_expert",
         "Unknown": "reporter",  # Unknown short-circuits past all Experts
     }
     return domain_to_node.get(routing.domain, "reporter")

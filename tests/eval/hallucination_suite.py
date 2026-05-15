@@ -3,8 +3,8 @@ tests/eval/hallucination_suite.py
 
 Hallucination test suite — Principle IV (NON-NEGOTIABLE), SC-005.
 
-Every ExpertDiagnosis produced by the Application, Network, and Database
-Expert nodes MUST satisfy two joint constraints:
+Every ExpertDiagnosis produced by the Application and Network Expert nodes
+MUST satisfy two joint constraints:
 
   1. SOURCE GROUNDING (Constraint G):
      Every LogExcerpt in ``diagnosis.cited_evidence`` must be verbatim from
@@ -150,12 +150,11 @@ STOP_WORDS: FrozenSet[str] = frozenset(
     }
 )
 
-# Location of per-domain expert golden JSONL files (T057–T059).
+# Location of per-domain expert golden JSONL files (T057–T058).
 _EVAL_DIR = Path(__file__).parent
 GOLDEN_FILES: Dict[str, Path] = {
     "Application": _EVAL_DIR / "application_expert_golden.jsonl",
     "Network": _EVAL_DIR / "network_expert_golden.jsonl",
-    "Database": _EVAL_DIR / "database_expert_golden.jsonl",
 }
 
 # Sentinel timestamp used by inline fixtures — set to a fixed point in
@@ -526,33 +525,6 @@ _PASS_NET_CONN_REFUSED = _Case(
     note="Cited excerpt is in hit_lines; hypothesis contains 'ECONNREFUSED'.",
 )
 
-_db_hit_pool = _make_log_excerpt(
-    text="pg: too many connections: max_connections=100 reached for database prod",
-    byte_offset=256,
-    container="db-proxy",
-)
-_db_hit_timeout = _make_log_excerpt(
-    text="query timeout after 30s waiting for connection pool slot",
-    byte_offset=512,
-    container="db-proxy",
-)
-_PASS_DB_POOL = _Case(
-    case_id="pass-db-connection-pool-exhausted",
-    diagnosis=_make_diagnosis(
-        domain="Database",
-        hypothesis=(
-            "The database proxy is rejecting new connections because "
-            "max_connections=100 has been reached; connection pool slots "
-            "are all occupied."
-        ),
-        cited=[_db_hit_pool, _db_hit_timeout],
-    ),
-    evidence=_make_evidence([_db_hit_pool, _db_hit_timeout]),
-    expect_violations=False,
-    note="Both cited excerpts are in hit_lines; hypothesis contains "
-    "'max_connections' and 'connection' from evidence.",
-)
-
 _net_hit_dns = _make_log_excerpt(
     text="getaddrinfo ENOTFOUND kafka.internal: DNS lookup failed for hostname",
     byte_offset=1024,
@@ -699,24 +671,24 @@ _FAIL_QUOTE_MATCH_FABRICATED_HYPOTHESIS = _Case(
     "appears in the cited evidence — Constraint Q violation.",
 )
 
-_db_hit_deadlock = _make_log_excerpt(
-    text="deadlock detected: process 1234 waits for ShareLock on transaction 5678",
+_net_hit_quiet = _make_log_excerpt(
+    text="connection refused: dial tcp 10.0.0.5:5432: connect: connection refused",
     byte_offset=0,
-    container="db",
+    container="proxy",
 )
 _FAIL_QUOTE_MATCH_DOMAIN_MISMATCH = _Case(
     case_id="fail-quote-match-domain-mismatch-hypothesis",
     diagnosis=_make_diagnosis(
-        domain="Database",
+        domain="Network",
         hypothesis=(
             "The ingress controller's TLS certificate has expired, causing "
-            "downstream connections to be rejected."
+            "downstream handshakes to be rejected."
         ),
-        cited=[_db_hit_deadlock],
+        cited=[_net_hit_quiet],
     ),
-    evidence=_make_evidence([_db_hit_deadlock]),
+    evidence=_make_evidence([_net_hit_quiet]),
     expect_violations=True,
-    note="Evidence is database deadlock; hypothesis fabricates a TLS cert "
+    note="Evidence is connection refused; hypothesis fabricates a TLS cert "
     "expiry story with zero shared tokens — Constraint Q violation.",
 )
 
@@ -779,7 +751,6 @@ INLINE_CASES: List[_Case] = [
     # Happy path — should produce zero violations
     _PASS_APP_OOM,
     _PASS_NET_CONN_REFUSED,
-    _PASS_DB_POOL,
     _PASS_NET_DNS,
     _PASS_APP_PANIC,
     # Adversarial — Constraint G (source grounding)
@@ -1147,7 +1118,7 @@ class TestHallucinationCheckerUnit:
         """Lowering MIN_TOKEN_LEN allows shorter tokens to satisfy quote-match."""
         checker = HallucinationChecker(min_token_len=2)
         exc = _make_log_excerpt(text="db up", byte_offset=0)
-        diagnosis = _make_diagnosis("Database", "db is up and running", [exc])
+        diagnosis = _make_diagnosis("Application", "db is up and running", [exc])
         violations = checker._check_quote_match(diagnosis, "custom-len")
         # "db" is 2 chars → passes with min_token_len=2
         assert not violations

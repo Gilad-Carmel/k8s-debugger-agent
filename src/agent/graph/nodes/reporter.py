@@ -42,7 +42,6 @@ APPROVAL_WINDOW_MINUTES = int(os.getenv("APPROVAL_WINDOW_MINUTES", "30"))
 _DOMAIN_ICON: dict[str, str] = {
     "Application": "⚙️",
     "Network": "🌐",
-    "Database": "🗄️",
     "Unknown": "❓",
 }
 

@@ -125,10 +125,9 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 - [x] T047 [US1] Expert base protocol + shared prompt builder in `src/agent/graph/nodes/experts/_base.py`
 - [x] T048 [P] [US1] Application Expert node in `src/agent/graph/nodes/experts/application.py` (full-context profile via `llm.py`; produces `ExpertDiagnosis` with cited evidence + `ProposedFix | None`)
 - [ ] T049 [P] [US1] Network Expert node in `src/agent/graph/nodes/experts/network.py`
-- [ ] T050 [P] [US1] Database Expert node in `src/agent/graph/nodes/experts/database.py`
 - [x] T051 [US1] Reporter node: assemble `Report`, render Block Kit blocks, POST to slack-mock, set `delivered_at` + `approval_deadline`, persist `report_delivered` audit row in `src/agent/graph/nodes/reporter.py` (FR-013, FR-014; depends on T024)
 - [x] T052 [US1] Slack-mock FastAPI service (`POST /messages`, `POST /messages/{id}/approve|reject` → signed callback to agent) in `deploy/slack_mock/app.py` + `deploy/slack_mock/Dockerfile`
-- [x] T053 [US1] Wire the graph in `src/agent/graph/builder.py`: `ingest → router → {application|network|database|unknown-short-circuit} → reporter`; conditional edge keyed on `classification` only (depends on T026, T045, T046, T047-T050, T051)
+- [x] T053 [US1] Wire the graph in `src/agent/graph/builder.py`: `ingest → router → {application|network|database-short-circuit|unknown-short-circuit} → reporter`; conditional edge keyed on `classification` only (depends on T026, T045, T046, T047-T049, T051)
 - [ ] T054 [US1] Fixture cluster manifests (App/Network/Database failure modes) at `tests/fixtures/cluster/{application,network,database}.yaml`
 - [ ] T055 [US1] `fire_webhook` helper + HMAC sign script at `tests/fixtures/fire_webhook.py` and `scripts/sign.sh`
 
@@ -137,14 +136,12 @@ Python monorepo with two installable packages, per plan.md §Project Structure:
 - [ ] T056 [P] [US1] Router golden labelled set at `tests/eval/router_golden.jsonl` and eval runner at `tests/eval/runner.py` (top-1 ≥85%, top-2 ≥97% per SC-001)
 - [ ] T057 [P] [US1] Application expert golden set at `tests/eval/application_expert_golden.jsonl`
 - [ ] T058 [P] [US1] Network expert golden set at `tests/eval/network_expert_golden.jsonl`
-- [ ] T059 [P] [US1] Database expert golden set at `tests/eval/database_expert_golden.jsonl`
 - [X] T060 [P] [US1] Hallucination test (every Expert claim must quote-match `cited_evidence`) at `tests/eval/hallucination_suite.py` (Principle IV NON-NEGOTIABLE, SC-005)
 
 ### Integration tests for US1
 
 - [ ] T061 [P] [US1] E2E application flow (webhook → report; no approval/execution) at `tests/integration/test_e2e_application_flow.py`
 - [ ] T062 [P] [US1] E2E network flow at `tests/integration/test_e2e_network_flow.py`
-- [ ] T063 [P] [US1] E2E database flow at `tests/integration/test_e2e_database_flow.py`
 - [ ] T064 [P] [US1] E2E unknown / low-confidence flow (no fix, Approve button absent) at `tests/integration/test_e2e_unknown_low_confidence.py`
 - [ ] T065 [P] [US1] Webhook auth rejection path (no LLM call, audit row written) at `tests/integration/test_webhook_auth_rejection.py`
 
@@ -326,7 +323,6 @@ Task: "T043 MCP read tool get_pod in src/mcp_server/tools/get_pod.py"
 # Then in parallel after T047 base lands:
 Task: "T048 Application Expert node in src/agent/graph/nodes/experts/application.py"
 Task: "T049 Network Expert node in src/agent/graph/nodes/experts/network.py"
-Task: "T050 Database Expert node in src/agent/graph/nodes/experts/database.py"
 ```
 
 ---
