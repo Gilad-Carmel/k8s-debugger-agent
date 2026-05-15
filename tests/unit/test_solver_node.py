@@ -14,9 +14,8 @@ Covers gaps not in test_solver_paths.py:
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
