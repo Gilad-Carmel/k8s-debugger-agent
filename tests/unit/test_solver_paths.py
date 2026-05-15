@@ -1,7 +1,7 @@
 """
-tests/integration/test_solver_paths.py
+tests/unit/test_solver_paths.py
 
-Integration tests for the Solver node execution paths (T089 – T093).
+Unit tests for the Solver node execution paths (T089 – T093).
 
 These tests exercise solver_node end-to-end with all MCP write tools mocked
 at the coroutine level.  No real Kubernetes cluster or MCP server is required.
@@ -15,10 +15,6 @@ T093 — Fingerprint mismatch: report fingerprint differs from state → failure
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import os
-import time
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, patch
