@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.agent.approval_token import issue_token
 from src.agent.graph.nodes.solver import solver_node
 from src.mcp_server.tools._guards import GuardError
 from src.shared.schemas import (
@@ -154,10 +155,12 @@ def _refused_output(reason: str = "admission_denied") -> WriteToolOutput:
 def _build_state(fix: ProposedFix | None = None) -> dict[str, Any]:
     fix = fix or _make_fix()
     report = _make_report(fix)
+    token = issue_token(correlation_id=_CORRELATION_ID, fingerprint=fix.fingerprint)
     return {
         "correlation_id": _CORRELATION_ID,
         "report": report,
         "approval": _make_approval(),
+        "approval_token": token,
     }
 
 
@@ -188,7 +191,7 @@ class TestSolverSuccessPath:
         assert result["report"].status == "executed"
 
     def test_rollback_deployment_success(self) -> None:
-        fix = _make_fix("rollback-deployment", {"to_revision": 3})
+        fix = _make_fix("rollback-deployment", {"to_revision": 3, "deployment": "app-deployment"})
         state = _build_state(fix)
         rollback_output = WriteToolOutput(
             outcome="applied",
@@ -212,7 +215,7 @@ class TestSolverSuccessPath:
         assert solver_run.reversal_recipe.inverse_action == "rollback-deployment"
 
     def test_scale_deployment_success(self) -> None:
-        fix = _make_fix("scale-deployment", {"to_replicas": 5})
+        fix = _make_fix("scale-deployment", {"to_replicas": 5, "deployment": "app-deployment"})
         state = _build_state(fix)
         scale_output = WriteToolOutput(
             outcome="applied",
@@ -355,6 +358,43 @@ class TestSolverKillSwitch:
 
 
 # ---------------------------------------------------------------------------
+# Deployment name guard
+# ---------------------------------------------------------------------------
+
+
+class TestSolverDeploymentNameGuard:
+    def test_rollback_without_deployment_key_causes_failure(self) -> None:
+        """rollback-deployment without parameters['deployment'] → failure, no MCP call."""
+        fix = _make_fix("rollback-deployment", {"to_revision": 3})  # missing 'deployment'
+        state = _build_state(fix)
+
+        with patch(
+            "src.mcp_server.tools.rollback_deployment.rollback_deployment",
+            new=AsyncMock(),
+        ) as mock_tool:
+            result = solver_node(state)
+
+        assert result["solver_run"].outcome == "failure"
+        assert result["solver_run"].error is not None
+        mock_tool.assert_not_awaited()
+
+    def test_scale_without_deployment_key_causes_failure(self) -> None:
+        """scale-deployment without parameters['deployment'] → failure, no MCP call."""
+        fix = _make_fix("scale-deployment", {"to_replicas": 3})  # missing 'deployment'
+        state = _build_state(fix)
+
+        with patch(
+            "src.mcp_server.tools.scale_deployment.scale_deployment",
+            new=AsyncMock(),
+        ) as mock_tool:
+            result = solver_node(state)
+
+        assert result["solver_run"].outcome == "failure"
+        assert result["solver_run"].error is not None
+        mock_tool.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
 # T093 — Fingerprint mismatch
 # ---------------------------------------------------------------------------
 
@@ -394,3 +434,116 @@ class TestSolverFingerprintMismatch:
         }
         result = solver_node(state)
         assert result["solver_run"].outcome == "failure"
+
+
+# ---------------------------------------------------------------------------
+# Approval-token fail-closed paths (security invariant FR-020)
+# ---------------------------------------------------------------------------
+
+
+class TestSolverApprovalTokenFailClosed:
+    def test_missing_token_causes_failure(self) -> None:
+        """No approval_token in state → solver fails closed; no MCP call issued."""
+        fix = _make_fix("restart-pod")
+        state = {
+            "correlation_id": _CORRELATION_ID,
+            "report": _make_report(fix),
+            # approval_token deliberately absent
+        }
+
+        with patch(
+            "src.mcp_server.tools.restart_pod.restart_pod",
+            new=AsyncMock(),
+        ) as mock_tool:
+            result = solver_node(state)
+
+        assert result["solver_run"].outcome == "failure"
+        assert "missing" in (result["solver_run"].error or "").lower()
+        mock_tool.assert_not_awaited()
+
+    def test_empty_token_causes_failure(self) -> None:
+        """Empty string approval_token → solver fails closed; no MCP call issued."""
+        fix = _make_fix("restart-pod")
+        state = {
+            "correlation_id": _CORRELATION_ID,
+            "report": _make_report(fix),
+            "approval_token": "",
+        }
+
+        with patch(
+            "src.mcp_server.tools.restart_pod.restart_pod",
+            new=AsyncMock(),
+        ) as mock_tool:
+            result = solver_node(state)
+
+        assert result["solver_run"].outcome == "failure"
+        mock_tool.assert_not_awaited()
+
+    def test_expired_token_causes_failure(self) -> None:
+        """Token with ttl=-1 is already expired → solver fails closed."""
+        fix = _make_fix("restart-pod")
+        expired_token = issue_token(
+            correlation_id=_CORRELATION_ID,
+            fingerprint=fix.fingerprint,
+            ttl_seconds=-1,
+        )
+        state = {
+            "correlation_id": _CORRELATION_ID,
+            "report": _make_report(fix),
+            "approval_token": expired_token,
+        }
+
+        with patch(
+            "src.mcp_server.tools.restart_pod.restart_pod",
+            new=AsyncMock(),
+        ) as mock_tool:
+            result = solver_node(state)
+
+        assert result["solver_run"].outcome == "failure"
+        assert "invalid or expired" in (result["solver_run"].error or "").lower()
+        mock_tool.assert_not_awaited()
+
+    def test_token_for_different_fingerprint_causes_failure(self) -> None:
+        """Token bound to a different fingerprint → fails closed (mutation guard)."""
+        fix = _make_fix("restart-pod")
+        # Issue a token for a *different* fingerprint (simulates ProposedFix mutation)
+        wrong_token = issue_token(
+            correlation_id=_CORRELATION_ID,
+            fingerprint="a" * 64,  # not fix.fingerprint
+        )
+        state = {
+            "correlation_id": _CORRELATION_ID,
+            "report": _make_report(fix),
+            "approval_token": wrong_token,
+        }
+
+        with patch(
+            "src.mcp_server.tools.restart_pod.restart_pod",
+            new=AsyncMock(),
+        ) as mock_tool:
+            result = solver_node(state)
+
+        assert result["solver_run"].outcome == "failure"
+        mock_tool.assert_not_awaited()
+
+    def test_token_for_different_correlation_id_causes_failure(self) -> None:
+        """Token issued for a different incident → fails closed."""
+        fix = _make_fix("restart-pod")
+        wrong_token = issue_token(
+            correlation_id="some-other-incident",
+            fingerprint=fix.fingerprint,
+        )
+        state = {
+            "correlation_id": _CORRELATION_ID,
+            "report": _make_report(fix),
+            "approval_token": wrong_token,
+        }
+
+        with patch(
+            "src.mcp_server.tools.restart_pod.restart_pod",
+            new=AsyncMock(),
+        ) as mock_tool:
+            result = solver_node(state)
+
+        assert result["solver_run"].outcome == "failure"
+        mock_tool.assert_not_awaited()

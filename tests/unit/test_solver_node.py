@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.agent.approval_token import issue_token
 from src.agent.graph.nodes.solver import solver_node
 from src.agent.graph.nodes.reporter import build_followup_blocks
 from src.shared.schemas import (
@@ -123,9 +124,11 @@ def _applied_output(
 
 def _state(fix: ProposedFix | None = None) -> dict:
     f = fix or _fix()
+    token = issue_token(correlation_id=_CORR, fingerprint=f.fingerprint)
     return {
         "correlation_id": _CORR,
         "report": _report(f),
+        "approval_token": token,
     }
 
 
@@ -224,7 +227,7 @@ class TestSolverRunFields:
             inverse_action="scale-deployment",
             inverse_parameters={"to_replicas": 2},
         )
-        fix = _fix("scale-deployment", {"to_replicas": 5})
+        fix = _fix("scale-deployment", {"to_replicas": 5, "deployment": "app-deployment"})
         state = _state(fix)
         output = WriteToolOutput(
             outcome="applied",
@@ -494,7 +497,7 @@ class TestBuildFollowupBlocks:
         assert _CORR in full_text
 
     def test_action_type_mentioned(self) -> None:
-        fix = _fix("rollback-deployment", {"to_revision": 3})
+        fix = _fix("rollback-deployment", {"to_revision": 3, "deployment": "app-deployment"})
         report = _report(fix)
         run = self._make_run("success")
         blocks = build_followup_blocks(report, run)

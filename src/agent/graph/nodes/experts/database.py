@@ -26,7 +26,7 @@ class DatabaseExpert(BaseExpert):
         proposed_fix = ProposedFix.build(
             action_type="rollback-deployment",
             target=fix_target,
-            parameters={"to_revision": 3},
+            parameters={"to_revision": 3, "deployment": "db-deployment"},
             permission_scope="sa-rollback-deployment",
         )
 
